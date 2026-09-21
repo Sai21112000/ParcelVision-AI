@@ -2,7 +2,7 @@
 
 Phone-friendly shipping-label scanner. Open the live demo on a device over HTTPS, allow the camera, then Approve / Retake / Adjust crop.
 
-**Live demo:** https://github.com/ — Pages URL is printed after deploy (`https://<user>.github.io/ParcelVision-AI/`).
+**Live demo:** https://sai21112000.github.io/ParcelVision-AI/
 
 On GitHub Pages, Gemini is off (static host). The UI still captures, crops, and queues labels in demo mode.
 
