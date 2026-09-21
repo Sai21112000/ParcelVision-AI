@@ -200,7 +200,7 @@ export class LabelCandidateDetector {
     const { width: sw, height: sh } = sourceSize(source);
     if (!sw || !sh) return null;
     const width = Math.min(this.config.analysisWidth, sw);
-    const height = Math.max(1, Math.round(width * sh / sw));
+    const height = Math.round(width * sh / sw);
     this.canvas.width = width;
     this.canvas.height = height;
     this.ctx.drawImage(source, 0, 0, width, height);

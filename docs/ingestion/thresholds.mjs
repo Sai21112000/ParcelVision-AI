@@ -1,8 +1,6 @@
 export const DEFAULT_THRESHOLDS = Object.freeze({
   analysisWidth: 640,
-  analysisFps: 20,
-  stableFrameCount: 10,
-  maxCornerMovePx: 5,
+  analysisFps: 6,
   minSharpness: 0.12,
   minBrightness: 0.18,
   maxBrightness: 0.92,
@@ -13,8 +11,7 @@ export const DEFAULT_THRESHOLDS = Object.freeze({
   stableDurationMs: 700,
   captureJpegQuality: 0.88,
   maxCaptureEdge: 1920,
-  minLaplacianVariance: 50,
-  guide: Object.freeze({ x: 0.10, y: 0.15, width: 0.80, height: 0.70 }),
+  guide: Object.freeze({ x: 0.10, y: 0.13, width: 0.80, height: 0.74 }),
 });
 
 export function thresholds(overrides = {}) {

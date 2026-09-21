@@ -21,13 +21,6 @@ export class IngestionClient {
     });
   }
 
-  async preprocess(ingestionId, payload) {
-    return request(`/api/parcel-ingestions/${ingestionId}/preprocess`, {
-      method: 'POST',
-      body: JSON.stringify(payload),
-    });
-  }
-
   async uploadImages(ingestionId, images) {
     return request(`/api/parcel-ingestions/${ingestionId}/images`, {
       method: 'PUT',
