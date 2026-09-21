@@ -1,36 +1,37 @@
 import { CameraSession, fileToDataUrl } from './ingestion/camera.mjs';
-import { FrameQualityAnalyzer, qualityState, shouldAutoCapture, qualityFailures } from './ingestion/quality.mjs';
+import { FrameQualityAnalyzer, qualityFailures } from './ingestion/quality.mjs';
 import { DEFAULT_THRESHOLDS } from './ingestion/thresholds.mjs';
 import { BarcodeScanner } from './ingestion/barcode.mjs';
-import { loadImage } from './ingestion/crop.mjs';
+import { cropGuideRegion, loadImage } from './ingestion/crop.mjs';
 import { IngestionClient } from './ingestion/client.mjs';
 import { CaptureSource, SCANNER_VERSION } from './ingestion/contracts.mjs';
 import { compareTracking, normalizeTracking } from './ingestion/tracking-validation.mjs';
 import { track } from './ingestion/telemetry.mjs';
 import { MOCK_SHOTS } from './ingestion/mock-shots.mjs';
-import { loadOpenCv, isOpenCvReady } from './ingestion/opencv-loader.mjs';
-import { LabelCandidateDetector } from './ingestion/label-detector.mjs';
-import { StabilityTracker } from './ingestion/stability.mjs';
+import { loadOpenCv } from './ingestion/opencv-loader.mjs';
 import { processStill, rewarp } from './ingestion/final-processor.mjs';
 import { PerspectiveCropEditor } from './ingestion/crop-editor.mjs';
-import { guideCorners } from './ingestion/perspective.mjs';
+import { guideCorners, fullFrameCorners } from './ingestion/perspective.mjs';
+import { enhanceForUpload, highContrastForOcr } from './ingestion/enhance.mjs';
+import { recognizeLabel, disposeOcrWorker, isOcrReady } from './ingestion/tesseract-ocr.mjs';
+import { analyzeLabelText } from './ingestion/label-metrics.mjs';
 
 const CARRIERS = [
-  'ไปรษณีย์ไทย / Thailand Post (001/2021)', 'เคอรี่ เอ็กซ์เพรส / Kerry Express (002/2021)',
-  'J&T Express (003/2021)', 'แฟลช เอ็กซ์เพรส / Flash Express (004/2021)',
-  'ดีเอชแอล เอ๊กซ์เพรส / DHL Express (005/2021)', 'ลาซาด้า / Lazada (006/2021)',
-  'ช้อปปี้ / Shopee (007/2021)', 'เบสท์ เอ็กซ์เพรส / Best Express (008/2021)',
-  'LEL Express (009/2021)', 'NINJA VAN (010/2021)',
-  'เอสซีจี เอ็กซ์เพรส / SCG Express (011/2021)', 'เฟดเอ็กซ์ เอ๊กซ์เพรส / FedEx Express (012/2021)',
+  'Thailand Post (001/2021)', 'Kerry Express (002/2021)',
+  'J&T Express (003/2021)', 'Flash Express (004/2021)',
+  'DHL Express (005/2021)', 'Lazada (006/2021)',
+  'Shopee (007/2021)', 'Best Express (008/2021)',
+  'LEL Express (009/2021)', 'Ninja Van (010/2021)',
+  'SCG Express (011/2021)', 'FedEx Express (012/2021)',
 ];
-const TYPES = ['ห่อเล็ก', 'ห่อกลาง', 'ห่อใหญ่ (มากกว่า 5 กก.)', 'Envelope', 'Bag', 'Small Box (Box)'];
+const TYPES = ['Small parcel', 'Medium parcel', 'Large parcel (>5 kg)', 'Envelope', 'Bag', 'Small Box'];
 const CONDITIONS = ['Appears Fine', 'Minor Damage', 'Moderate Damage', 'Major Damage', 'Water Damage'];
 const UNITS = [
-  { code: '21F-MKT', name: 'ชั้น 21 · Marketing' },
-  { code: '18F-FIN', name: 'ชั้น 18 · Finance' },
-  { code: '24F-ENG', name: 'ชั้น 24 · Engineering' },
-  { code: '12F-HRD', name: 'ชั้น 12 · HR' },
-  { code: '9F-CS',   name: 'ชั้น 9 · Customer Service' },
+  { code: '21F-MKT', name: 'Floor 21 · Marketing' },
+  { code: '18F-FIN', name: 'Floor 18 · Finance' },
+  { code: '24F-ENG', name: 'Floor 24 · Engineering' },
+  { code: '12F-HRD', name: 'Floor 12 · HR' },
+  { code: '9F-CS',   name: 'Floor 9 · Customer Service' },
 ];
 const STAFF = {
   '21F-MKT': ['K.Tomoya Sakai', 'K.Ratchadawan P.', 'K.Nattapong S.'],
@@ -42,13 +43,13 @@ const STAFF = {
 const EXISTING_TRACKINGS = ['LEXPU0703471485'];
 const T_AUTO = 0.90, T_CHECK = 0.60;
 const FIELDS = [
-  { k: 'tracking',  label: 'Tracking No. / เลขพัสดุ' },
-  { k: 'carrier',   label: 'Carrier / ขนส่ง' },
-  { k: 'recipient', label: 'ผู้รับ' },
-  { k: 'unit',      label: 'ชั้น / แผนก' },
-  { k: 'type',      label: 'ประเภท / ขนาด' },
-  { k: 'condition', label: 'สภาพพัสดุ' },
-  { k: 'sender',    label: 'ผู้ส่ง / ร้าน', opt: true },
+  { k: 'tracking',  label: 'Tracking number' },
+  { k: 'carrier',   label: 'Carrier' },
+  { k: 'recipient', label: 'Recipient' },
+  { k: 'unit',      label: 'Floor / department' },
+  { k: 'type',      label: 'Type / size' },
+  { k: 'condition', label: 'Condition' },
+  { k: 'sender',    label: 'Sender / shop', opt: true },
 ];
 const ENUMS = { carriers: CARRIERS, types: TYPES, conditions: CONDITIONS };
 
@@ -95,22 +96,13 @@ let queue = [], seq = 0, openId = null, batchNo = 1621, parcelSeq = 15630;
 let OCR = { enabled: false, model: '' };
 let pendingCapture = null;
 let analyzing = false;
-let loopTimer = 0;
-let loopBusy = false;
-let opencvState = 'idle';
-let liveCorners = null;
-let liveBarcodes = [];
-let lastQuality = null;
 let cropEditor = null;
 let cropEditorSnapshot = null;
-let loopPaused = false;
 let previewFailures = [];
 
 const client = new IngestionClient();
 const camera = new CameraSession(document.getElementById('sm-cam'));
 const analyzer = new FrameQualityAnalyzer();
-const detector = new LabelCandidateDetector();
-const stability = new StabilityTracker(DEFAULT_THRESHOLDS.stableDurationMs);
 const barcodes = new BarcodeScanner();
 
 function buildItem(shot, id, photo) {
@@ -167,7 +159,7 @@ async function loadOcrStatus() {
   try { OCR = await (await fetch('/api/ocr-status')).json(); } catch { OCR = { enabled: false, model: '' }; }
   document.getElementById('sm-mode').innerHTML = OCR.enabled
     ? '<span class="tis-badge-outline-success tis-badge-sm">Gemini · ' + OCR.model + '</span>'
-    : '<span class="tis-badge-outline-warning tis-badge-sm">โหมดสาธิต · ไม่มี API key</span>';
+    : '<span class="tis-badge-outline-warning tis-badge-sm">Demo mode · no API key</span>';
 }
 
 function showPanel(name) {
@@ -186,20 +178,9 @@ const camMessage = err => {
 };
 
 function stopCameraTracks() {
-  stopQualityLoop();
   camera.stop();
   document.getElementById('sm-view').classList.remove('is-live', 'is-quad');
-}
-
-function stopQualityLoop() {
-  if (loopTimer) cancelAnimationFrame(loopTimer);
-  loopTimer = 0;
-  loopBusy = false;
-  analyzer.reset();
-  stability.reset();
-  liveCorners = null;
-  liveBarcodes = [];
-  lastQuality = null;
+  setBusy(false);
 }
 
 function closeScanner() {
@@ -209,24 +190,42 @@ function closeScanner() {
   track('camera_closed');
 }
 
+function setBusy(on, message) {
+  analyzing = on;
+  const overlay = document.getElementById('sm-capture-processing');
+  const col = document.querySelector('.sm-capture-col');
+  const snap = document.getElementById('sm-snap');
+  if (overlay) overlay.hidden = !on;
+  if (col) col.classList.toggle('is-busy', on);
+  if (snap) snap.disabled = on;
+  if (message) {
+    const processing = document.getElementById('sm-processing-text');
+    if (processing) processing.textContent = message;
+    const quality = document.getElementById('sm-quality-text');
+    if (quality) quality.textContent = message;
+  }
+}
+
+function idleScannerMessage() {
+  document.getElementById('sm-quality-text').textContent = 'Align the label, then tap SNAP LABEL';
+  document.getElementById('sm-quality').dataset.level = 'neutral';
+  const coach = document.getElementById('sm-view-coach');
+  if (coach) coach.textContent = 'Center the shipping label in the frame';
+  document.getElementById('sm-view').dataset.quality = 'neutral';
+}
+
 async function continueToCamera() {
   hideManualEntry();
   document.getElementById('sm-crop-editor').hidden = true;
   showPanel('scanner');
   track('camera_opened');
   const view = document.getElementById('sm-view');
-  loopPaused = false;
-  opencvState = isOpenCvReady() ? 'ready' : 'loading';
-  setQualityUi({ documentBoundaryConfidence: 0, sharpness: 1, brightness: 0.5, glareRisk: 0 });
+  idleScannerMessage();
   try {
     await camera.start('environment');
     view.classList.add('is-live');
     await barcodes.initialize();
     track('camera_permission_granted');
-    startQualityLoop();
-    if (opencvState !== 'ready') {
-      loadOpenCv().then(() => { opencvState = 'ready'; }).catch(() => { opencvState = 'fallback'; });
-    }
   } catch (err) {
     view.classList.remove('is-live');
     document.getElementById('sm-cam-msg').innerHTML = camMessage(err);
@@ -234,180 +233,251 @@ async function continueToCamera() {
   }
 }
 
-function overlayPoints(corners, video, view) {
-  const vw = video.videoWidth, vh = video.videoHeight;
-  const bw = view.clientWidth, bh = view.clientHeight;
-  if (!vw || !vh || !bw || !bh) return corners;
-  const scale = Math.min(bw / vw, bh / vh);
-  const w = vw * scale, h = vh * scale;
-  const left = (bw - w) / 2, top = (bh - h) / 2;
-  return corners.map(p => ({
-    x: (left + p.x * w) / bw,
-    y: (top + p.y * h) / bh,
-  }));
-}
-
-function setOverlay(corners, level) {
-  const view = document.getElementById('sm-view');
-  const poly = document.getElementById('sm-poly');
-  const cut = document.getElementById('sm-poly-cut');
-  const video = document.getElementById('sm-cam');
-  const showQuad = !!(corners?.length === 4 && opencvState === 'ready');
-  view.classList.toggle('is-quad', showQuad);
-  if (!showQuad || !poly || !cut) return;
-  const mapped = overlayPoints(corners, video, view);
-  const points = mapped.map(p => p.x.toFixed(4) + ',' + p.y.toFixed(4)).join(' ');
-  poly.setAttribute('points', points);
-  cut.setAttribute('points', points);
-  view.dataset.quality = level;
-}
-
-function setQualityUi(quality) {
-  const state = qualityState(quality);
-  const view = document.getElementById('sm-view');
-  const box = document.getElementById('sm-quality');
-  const coach = document.getElementById('sm-view-coach');
-  view.dataset.quality = state.level;
-  box.dataset.level = state.level;
-  const message = analyzing ? 'Capturing…' : state.message;
-  document.getElementById('sm-quality-text').textContent = message;
-  if (coach) {
-    coach.textContent = analyzing
-      ? 'Capturing…'
-      : (state.level === 'ready' ? 'Hold still — capturing' : 'Fill the frame with the full shipping label. ' + state.message);
-  }
-}
-
-async function runLivePass() {
-  const video = document.getElementById('sm-cam');
-  const guideQuality = analyzer.analyze(video);
-  liveBarcodes = await barcodes.detect(video);
-  let quality = guideQuality;
-  liveCorners = null;
-  if (opencvState === 'ready') {
-    const detected = detector.detect(video, liveBarcodes);
-    const best = detected?.best;
-    if (best?.corners) {
-      const stab = stability.update(best.corners);
-      liveCorners = best.corners;
-      quality = {
-        sharpness: detected.sharpness ?? guideQuality?.sharpness ?? 0,
-        brightness: detected.brightness ?? guideQuality?.brightness ?? 0.5,
-        glareRisk: detected.glareRisk ?? guideQuality?.glareRisk ?? 0,
-        stability: stab.stability,
-        stabilityDurationMs: stab.durationMs,
-        labelCoverage: best.coverage,
-        documentBoundaryConfidence: best.confidence,
-        allCornersInsideSafeMargin: best.allCornersInsideSafeMargin,
-        ambiguous: !!detected.ambiguous,
-        forced: false,
-      };
-    } else {
-      stability.reset();
-    }
-  }
-  lastQuality = quality;
-  const state = qualityState(quality);
-  setOverlay(liveCorners, state.level);
-  setQualityUi(quality);
-  if (shouldAutoCapture(quality) && !analyzing) {
-    track('auto_capture_started');
-    await captureStill('auto', quality, liveCorners);
-  }
-}
-
-function startQualityLoop() {
-  stopQualityLoop();
-  let last = 0;
-  const interval = 1000 / DEFAULT_THRESHOLDS.analysisFps;
-  const tick = now => {
-    loopTimer = requestAnimationFrame(tick);
-    if (now - last < interval || analyzing || loopBusy || loopPaused) return;
-    last = now;
-    loopBusy = true;
-    Promise.resolve(runLivePass()).finally(() => { loopBusy = false; });
+function fallbackQuality() {
+  return {
+    sharpness: 0.5, brightness: 0.5, glareRisk: 0.05, stability: 1,
+    labelCoverage: DEFAULT_THRESHOLDS.guide.width, documentBoundaryConfidence: 0.5,
+    allCornersInsideSafeMargin: true, forced: false,
   };
-  loopTimer = requestAnimationFrame(tick);
+}
+
+function renderPreviewOcr(text, metrics) {
+  const pre = document.getElementById('sm-ocr-text');
+  const warn = document.getElementById('sm-ocr-warning');
+  const extra = document.getElementById('sm-ocr-extras');
+  if (pre) pre.textContent = text || 'No text detected in the frame.';
+  if (warn) {
+    warn.hidden = !metrics || metrics.ok;
+    warn.textContent = metrics?.warning || '';
+  }
+  if (extra) {
+    const bits = [];
+    if (metrics?.trackingCandidates?.length) bits.push('Tracking-like: ' + metrics.trackingCandidates[0]);
+    if (metrics?.carriers?.length) bits.push('Carrier: ' + metrics.carriers.join(', '));
+    if (metrics?.date) bits.push('Date: ' + metrics.date);
+    if (metrics?.weight) bits.push('Weight: ' + metrics.weight);
+    if (metrics?.ocrConfidence > 0) bits.push('OCR ' + Math.round(metrics.ocrConfidence) + '%');
+    extra.textContent = bits.join(' · ');
+    extra.hidden = !bits.length;
+  }
+}
+
+async function runLocalOcr(geometricCrop, onStatus) {
+  try {
+    const ocrImage = await highContrastForOcr(geometricCrop);
+    return await recognizeLabel(ocrImage, onStatus);
+  } catch (err) {
+    console.error('Local OCR failed', err);
+    return { text: '', confidence: 0, trackingText: '' };
+  }
+}
+
+async function applyEnhancementAndOcr(pending) {
+  pending.crop = await enhanceForUpload(pending.geometricCrop);
+  const probe = await loadImage(pending.crop).catch(() => null);
+  pending.barcodeValues = probe ? await barcodes.detect(probe) : [];
+  const ocr = await runLocalOcr(pending.geometricCrop, msg => setBusy(true, msg));
+  pending.localOcrText = ocr.text || '';
+  pending.labelMetrics = analyzeLabelText(pending.localOcrText);
+  pending.labelMetrics.ocrConfidence = ocr.confidence || 0;
+  const failures = qualityFailures(pending.quality);
+  if (!pending.labelMetrics.ok) failures.push(pending.labelMetrics.warning);
+  document.getElementById('sm-preview-crop').src = pending.crop;
+  document.getElementById('sm-preview-original').src = pending.original;
+  renderPreviewQuality(failures, pending.barcodeValues);
+  renderPreviewOcr(pending.localOcrText, pending.labelMetrics);
+  return failures;
+}
+
+function previewImageSrc(kind) {
+  if (kind === 'original') {
+    return pendingCapture?.original || document.getElementById('sm-preview-original')?.src || '';
+  }
+  return pendingCapture?.crop || document.getElementById('sm-preview-crop')?.src || '';
+}
+
+async function downloadImage(src, basename = 'parcel-label') {
+  if (!src) return;
+  const stamp = new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-');
+  const ext = /image\/png/i.test(src) ? 'png' : 'jpg';
+  const name = `${basename}-${stamp}.${ext}`;
+  try {
+    const blob = await (await fetch(src)).blob();
+    const href = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = href;
+    a.download = name;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(href), 1500);
+  } catch {
+    const a = document.createElement('a');
+    a.href = src;
+    a.download = name;
+    a.rel = 'noopener';
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  }
+}
+
+async function downloadPreviewImage(kind) {
+  await downloadImage(
+    previewImageSrc(kind),
+    kind === 'original' ? 'parcel-original' : 'parcel-enhanced',
+  );
+}
+
+function sheetPhotoSrc() {
+  const item = queue.find(i => i.id === openId);
+  return item?.photo
+    || document.getElementById('sm-sheet-photo')?.src
+    || document.getElementById('sm-photo-lightbox-img')?.src
+    || '';
+}
+
+async function downloadSheetPhoto() {
+  await downloadImage(sheetPhotoSrc(), 'parcel-review');
+}
+
+function previewSheetPhoto() {
+  const src = sheetPhotoSrc();
+  if (!src) return;
+  document.getElementById('sm-photo-lightbox-img').src = src;
+  document.getElementById('sm-photo-lightbox').hidden = false;
+}
+
+function closePhotoPreview() {
+  const host = document.getElementById('sm-photo-lightbox');
+  if (host) host.hidden = true;
+}
+
+async function prepareCapture(original, source, mode, options = {}) {
+  hideManualEntry();
+  camera.stop();
+  document.getElementById('sm-view').classList.remove('is-live', 'is-quad');
+  analyzer.reset();
+  if (source === CaptureSource.CAMERA) showPanel('scanner');
+  const findingLabel = source === CaptureSource.UPLOAD && options.detect;
+  setBusy(true, findingLabel ? 'Finding the label…' : 'Checking the label…');
+  try {
+    let geometricCrop;
+    let cornersNormalized;
+    let detectedLabel;
+    let quality;
+
+    if (source === CaptureSource.UPLOAD) {
+      geometricCrop = original;
+      cornersNormalized = fullFrameCorners();
+      const probe = await loadImage(original).catch(() => null);
+      quality = (probe && analyzer.analyze(probe)) || fallbackQuality();
+      quality.documentBoundaryConfidence = Math.max(quality.documentBoundaryConfidence || 0, 0.88);
+      quality.labelCoverage = 1;
+      detectedLabel = {
+        confidence: quality.documentBoundaryConfidence || 0.5,
+        cornersNormalized,
+        labelCoverage: 1,
+        wasManuallyAdjusted: false,
+        ambiguous: false,
+      };
+      if (options.detect) {
+        await loadOpenCv().catch(() => {});
+        const processed = await processStill(original, {
+          quality: options.quality,
+          allowGuide: false,
+        });
+        const conf = processed.detectedLabel?.confidence || 0;
+        const strong = !processed.usedGuide
+          && !processed.detectedLabel?.ambiguous
+          && conf >= DEFAULT_THRESHOLDS.minBoundaryConfidence;
+        if (strong) {
+          geometricCrop = processed.crop;
+          cornersNormalized = processed.cornersNormalized;
+          detectedLabel = processed.detectedLabel;
+          quality = processed.quality;
+        }
+      }
+    } else {
+      geometricCrop = await cropGuideRegion(original);
+      cornersNormalized = guideCorners();
+      const probe = await loadImage(original).catch(() => null);
+      quality = (probe && analyzer.analyze(probe)) || fallbackQuality();
+      quality.documentBoundaryConfidence = Math.max(quality.documentBoundaryConfidence || 0, 0.88);
+      quality.labelCoverage = DEFAULT_THRESHOLDS.guide.width;
+      detectedLabel = {
+        confidence: quality.documentBoundaryConfidence,
+        cornersNormalized,
+        labelCoverage: quality.labelCoverage,
+        wasManuallyAdjusted: false,
+        ambiguous: false,
+      };
+    }
+
+    setBusy(true, isOcrReady() ? 'Reading label text…' : 'Preparing text reader…');
+    pendingCapture = {
+      original,
+      crop: geometricCrop,
+      geometricCrop,
+      quality: { ...quality },
+      source,
+      mode,
+      barcodeValues: [],
+      forced: false,
+      cornersNormalized,
+      detectedLabel,
+      localOcrText: '',
+      labelMetrics: null,
+    };
+    await applyEnhancementAndOcr(pendingCapture);
+    showPanel('preview');
+    track('capture_completed', {
+      mode,
+      failures: previewFailures.length,
+      ocrOk: !!pendingCapture.labelMetrics?.ok,
+    });
+  } catch (err) {
+    if (source === CaptureSource.UPLOAD) showPanel('entry');
+    else idleScannerMessage();
+    document.getElementById('sm-quality-text').textContent = err.message || 'Capture failed';
+    throw err;
+  } finally {
+    setBusy(false);
+  }
 }
 
 async function captureNow() {
-  track('manual_capture_started');
-  const video = document.getElementById('sm-cam');
-  const quality = lastQuality || analyzer.analyze(video) || {
-    sharpness: 0, brightness: 0, glareRisk: 1, stability: 0,
-    labelCoverage: DEFAULT_THRESHOLDS.guide.width, documentBoundaryConfidence: 0.5,
-    allCornersInsideSafeMargin: true, forced: true,
-  };
-  await captureStill('manual', quality, liveCorners);
-}
-
-async function captureStill(mode, quality, cornersNormalized) {
   if (analyzing) return;
-  analyzing = true;
-  document.getElementById('sm-quality-text').textContent = 'Capturing…';
+  setBusy(true, 'Checking the label…');
+  track('manual_capture_started');
   try {
     const original = await camera.takePhoto();
-    await showPreview(original, quality, CaptureSource.CAMERA, mode, cornersNormalized);
+    await prepareCapture(original, CaptureSource.CAMERA, 'manual', { detect: false });
   } catch (err) {
+    setBusy(false);
+    idleScannerMessage();
     document.getElementById('sm-quality-text').textContent = err.message || 'Capture failed';
-  } finally {
-    analyzing = false;
+    if (!camera.hasLiveTrack() && !document.getElementById('sm-scanner').hidden) continueToCamera();
   }
 }
 
 function renderPreviewQuality(failures, barcodeValues) {
   previewFailures = failures || [];
-  document.getElementById('sm-preview-quality').innerHTML = (failures.length ? failures : [
-    'In focus', 'Full label visible', barcodeValues.length ? 'Barcode detected' : 'No barcode detected',
-  ]).map(line => '<div class="' + (failures.length ? 'bad' : 'ok') + '">' + (failures.length ? '✗ ' : '✓ ') + line + '</div>').join('');
-}
-
-async function showPreview(original, quality, source, mode, cornersNormalized) {
-  stopQualityLoop();
-  camera.stop();
-  document.getElementById('sm-view').classList.remove('is-live', 'is-quad');
-  const processed = await processStill(original, {
-    cornersNormalized,
-    quality,
-    barcodes: liveBarcodes,
-  });
-  const crop = processed.crop;
-  const probe = await loadImage(crop).catch(() => null);
-  const barcodeValues = probe ? await barcodes.detect(probe) : [];
-  const failures = processed.failures.length ? processed.failures : qualityFailures(processed.quality);
-  pendingCapture = {
-    original,
-    crop,
-    quality: { ...processed.quality },
-    source,
-    mode,
-    barcodeValues,
-    forced: false,
-    cornersNormalized: processed.cornersNormalized,
-    detectedLabel: processed.detectedLabel,
-  };
-  document.getElementById('sm-preview-crop').src = crop;
-  document.getElementById('sm-preview-original').src = original;
-  renderPreviewQuality(failures, barcodeValues);
-  showPanel('preview');
-  track('capture_completed', { mode, failures: failures.length, opencv: processed.opencv });
+  const okLines = [
+    'Label framed',
+    barcodeValues.length ? 'Barcode detected' : 'No barcode detected',
+  ];
+  document.getElementById('sm-preview-quality').innerHTML = [
+    ...okLines.map(line => '<div class="ok">✓ ' + line + '</div>'),
+    ...previewFailures.map(line => '<div class="bad">✗ ' + line + '</div>'),
+  ].join('');
 }
 
 function ensureCropEditor() {
   if (cropEditor) return cropEditor;
-  cropEditor = new PerspectiveCropEditor(document.getElementById('sm-crop-canvas'), async corners => {
-    if (!pendingCapture) return;
-    const result = await rewarp(pendingCapture.original, corners);
-    pendingCapture.crop = result.crop;
-    pendingCapture.cornersNormalized = result.cornersNormalized;
-    pendingCapture.detectedLabel = result.detectedLabel;
-    pendingCapture.quality = {
-      ...pendingCapture.quality,
-      ...result.quality,
-      documentBoundaryConfidence: result.detectedLabel.confidence,
-    };
-    document.getElementById('sm-preview-crop').src = result.crop;
-    renderPreviewQuality(result.failures, pendingCapture.barcodeValues || []);
+  cropEditor = new PerspectiveCropEditor(document.getElementById('sm-crop-canvas'), corners => {
+    if (pendingCapture) pendingCapture.cornersNormalized = corners;
   });
   return cropEditor;
 }
@@ -415,23 +485,50 @@ function ensureCropEditor() {
 async function openCropEditor() {
   if (!pendingCapture) return;
   cropEditorSnapshot = {
-    crop: pendingCapture.crop,
+    crop: pendingCapture.geometricCrop,
+    enhanced: pendingCapture.crop,
     corners: pendingCapture.cornersNormalized,
     detectedLabel: { ...pendingCapture.detectedLabel },
+    localOcrText: pendingCapture.localOcrText,
+    labelMetrics: pendingCapture.labelMetrics,
+    barcodeValues: pendingCapture.barcodeValues,
   };
   const image = await loadImage(pendingCapture.original);
   const canvas = document.getElementById('sm-crop-canvas');
   const host = document.getElementById('sm-crop-editor');
   host.hidden = false;
-  const maxW = Math.min(720, Math.max(280, host.querySelector('.sm-crop-editor-card')?.clientWidth || 640));
-  canvas.width = maxW;
-  canvas.height = Math.max(180, Math.round(maxW * image.naturalHeight / image.naturalWidth));
-  ensureCropEditor().setImage(image, pendingCapture.cornersNormalized || guideCorners());
+  const card = host.querySelector('.sm-crop-editor-card');
+  const maxW = Math.min(640, Math.max(240, (card?.clientWidth || 560) - 8));
+  const maxH = Math.max(180, Math.min(360, Math.round(window.innerHeight * 0.42)));
+  const scale = Math.min(maxW / image.naturalWidth, maxH / image.naturalHeight, 1);
+  canvas.width = Math.max(160, Math.round(image.naturalWidth * scale));
+  canvas.height = Math.max(140, Math.round(image.naturalHeight * scale));
+  canvas.style.width = `${canvas.width}px`;
+  canvas.style.height = `${canvas.height}px`;
+  const startCorners = guideCorners();
+  ensureCropEditor().setImage(image, startCorners);
 }
 
-function applyCropEdit() {
+async function applyCropEdit() {
+  if (!pendingCapture) return;
+  const corners = cropEditor?.getCorners?.() || pendingCapture.cornersNormalized;
   document.getElementById('sm-crop-editor').hidden = true;
   cropEditorSnapshot = null;
+  setBusy(true, 'Checking the label…');
+  try {
+    const result = await rewarp(pendingCapture.original, corners);
+    pendingCapture.geometricCrop = result.crop;
+    pendingCapture.cornersNormalized = result.cornersNormalized;
+    pendingCapture.detectedLabel = result.detectedLabel;
+    pendingCapture.quality = {
+      ...pendingCapture.quality,
+      ...result.quality,
+      documentBoundaryConfidence: result.detectedLabel.confidence,
+    };
+    await applyEnhancementAndOcr(pendingCapture);
+  } finally {
+    setBusy(false);
+  }
 }
 
 function approveCapture() {
@@ -439,9 +536,7 @@ function approveCapture() {
 }
 
 function approveCropEdit() {
-  document.getElementById('sm-crop-editor').hidden = true;
-  cropEditorSnapshot = null;
-  approveCapture();
+  applyCropEdit();
 }
 
 function retakeFromCropEditor() {
@@ -452,10 +547,20 @@ function retakeFromCropEditor() {
 
 function cancelCropEdit() {
   if (cropEditorSnapshot && pendingCapture) {
-    pendingCapture.crop = cropEditorSnapshot.crop;
+    pendingCapture.geometricCrop = cropEditorSnapshot.crop;
+    pendingCapture.crop = cropEditorSnapshot.enhanced || cropEditorSnapshot.crop;
     pendingCapture.cornersNormalized = cropEditorSnapshot.corners;
     pendingCapture.detectedLabel = cropEditorSnapshot.detectedLabel;
+    pendingCapture.localOcrText = cropEditorSnapshot.localOcrText;
+    pendingCapture.labelMetrics = cropEditorSnapshot.labelMetrics;
+    pendingCapture.barcodeValues = cropEditorSnapshot.barcodeValues || [];
     document.getElementById('sm-preview-crop').src = pendingCapture.crop;
+    const failures = qualityFailures(pendingCapture.quality);
+    if (pendingCapture.labelMetrics && !pendingCapture.labelMetrics.ok) {
+      failures.push(pendingCapture.labelMetrics.warning);
+    }
+    renderPreviewQuality(failures, pendingCapture.barcodeValues);
+    renderPreviewOcr(pendingCapture.localOcrText, pendingCapture.labelMetrics);
   }
   document.getElementById('sm-crop-editor').hidden = true;
   cropEditorSnapshot = null;
@@ -485,7 +590,12 @@ async function ingestCapture(capture) {
     id, photo: capture.crop || capture.original || parcelPhoto(id), fields: null,
     acknowledged: false, dupOk: false, status: 'reading', error: '',
     barcodeConflict: false, conflictResolved: false, reviewRequired: !!capture.forced,
-    reviewReasons: capture.forced ? ['Image was submitted despite a quality failure'] : [],
+    reviewReasons: [
+      ...(capture.forced ? ['Image was submitted despite a quality failure'] : []),
+      ...(capture.labelMetrics && !capture.labelMetrics.ok
+        ? ['Local OCR did not find a tracking number or carrier name']
+        : []),
+    ],
     barcodeValues: capture.barcodeValues || [],
   };
   queue.push(item);
@@ -500,6 +610,8 @@ async function ingestCapture(capture) {
       forced: !!capture.forced,
       detectedLabel: capture.detectedLabel,
       scannerVersion: SCANNER_VERSION,
+      localOcrText: capture.localOcrText || '',
+      labelMetrics: capture.labelMetrics || null,
     });
     track('image_uploaded', { ingestionId: session.ingestionId });
     track('extraction_started', { ingestionId: session.ingestionId });
@@ -538,17 +650,28 @@ function pickFiles() { document.getElementById('sm-file').click(); }
 async function filesPicked(input) {
   const files = [...input.files];
   input.value = '';
+  if (analyzing) return;
   for (const file of files) {
-    const original = await fileToDataUrl(file);
-    await showPreview(original, null, CaptureSource.UPLOAD, 'upload');
+    try {
+      const original = await fileToDataUrl(file);
+      await prepareCapture(original, CaptureSource.UPLOAD, 'upload', { detect: false });
+    } catch (err) {
+      showPanel('entry');
+      document.getElementById('sm-quality-text').textContent = err.message || 'Capture failed';
+    }
   }
 }
 async function dropFiles(e) {
   e.preventDefault();
+  if (analyzing) return;
   const files = [...e.dataTransfer.files].filter(f => f.type.startsWith('image/'));
-  if (files.length) {
+  if (!files.length) return;
+  try {
     const original = await fileToDataUrl(files[0]);
-    await showPreview(original, null, CaptureSource.UPLOAD, 'upload');
+    await prepareCapture(original, CaptureSource.UPLOAD, 'upload', { detect: false });
+  } catch (err) {
+    showPanel('entry');
+    document.getElementById('sm-quality-text').textContent = err.message || 'Capture failed';
   }
 }
 
@@ -619,39 +742,39 @@ function renderQueue() {
     const st = itemStatus(item);
     if (st === 'reading') {
       return '<div class="sm-qcard is-reading"><img class="sm-thumb" src="' + item.photo + '" alt="">' +
-        '<div class="sm-qcard-body"><div class="sm-qcard-title tis-text-gray">AI กำลังอ่านฉลาก…</div>' +
+        '<div class="sm-qcard-body"><div class="sm-qcard-title tis-text-gray">AI is reading the label…</div>' +
         '<div class="sm-bar" style="margin:8px 0 6px;width:70%"></div><div class="sm-bar" style="width:45%"></div></div></div>';
     }
     if (st === 'error') {
       return '<div class="sm-qcard is-error"><img class="sm-thumb" src="' + item.photo + '" alt="">' +
         '<div class="sm-qcard-body">' +
-          '<div class="sm-qcard-title tis-text-danger">อ่านฉลากไม่สำเร็จ</div>' +
+          '<div class="sm-qcard-title tis-text-danger">Could not read the label</div>' +
           '<div class="sm-qcard-meta tis-text-gray" style="word-break:break-word">' + esc(item.error) + '</div>' +
           '<div style="margin-top:8px">' +
-            '<button class="sm-choice" onclick="retry(' + item.id + ')">ลองอ่านอีกครั้ง</button> ' +
-            '<button class="sm-choice" onclick="removeItem(' + item.id + ')">ลบ</button>' +
+            '<button class="sm-choice" onclick="retry(' + item.id + ')">Try again</button> ' +
+            '<button class="sm-choice" onclick="removeItem(' + item.id + ')">Delete</button>' +
           '</div>' +
         '</div></div>';
     }
     const f = item.fields;
     const flagged = FIELDS.filter(({ k }) => needsAttention(f[k])).length;
     const badge = st === 'ready'
-      ? '<span class="tis-badge-success tis-badge-sm tis-badge-round"><mat-icon class="mat-icon material-icons">check_circle</mat-icon>พร้อม</span>'
-      : '<span class="tis-badge-warning tis-badge-sm tis-badge-round"><mat-icon class="mat-icon material-icons">touch_app</mat-icon>ต้องตรวจ ' + flagged + '</span>';
+      ? '<span class="tis-badge-success tis-badge-sm tis-badge-round">Ready</span>'
+      : '<span class="tis-badge-warning tis-badge-sm tis-badge-round">Needs review ' + flagged + '</span>';
     const dup = isDuplicate(f.tracking.value) && !item.dupOk
-      ? ' <span class="tis-badge-danger tis-badge-sm tis-badge-round"><mat-icon class="mat-icon material-icons">error_outline</mat-icon>เลขซ้ำ</span>' : '';
+      ? ' <span class="tis-badge-danger tis-badge-sm tis-badge-round">Duplicate</span>' : '';
     const conflict = item.barcodeConflict && !item.conflictResolved
-      ? ' <span class="tis-badge-danger tis-badge-sm tis-badge-round"><mat-icon class="mat-icon material-icons">compare_arrows</mat-icon>Barcode ไม่ตรง OCR</span>' : '';
+      ? ' <span class="tis-badge-danger tis-badge-sm tis-badge-round">Barcode does not match OCR</span>' : '';
     return '<div class="sm-qcard ' + (st === 'ready' ? '' : 'is-review') + '" onclick="openSheet(' + item.id + ')">' +
       '<img class="sm-thumb" src="' + item.photo + '" alt="">' +
       '<div class="sm-qcard-body">' +
-        '<div class="sm-qcard-title">' + (f.tracking.value || '— ไม่พบเลขพัสดุ —') + '</div>' +
-        '<div class="sm-qcard-meta">' + (f.recipient.value || '— ไม่พบผู้รับ —') + ' · ' + f.unit.value + '</div>' +
+        '<div class="sm-qcard-title">' + (f.tracking.value || '— No tracking number —') + '</div>' +
+        '<div class="sm-qcard-meta">' + (f.recipient.value || '— No recipient —') + ' · ' + f.unit.value + '</div>' +
         '<div class="sm-qcard-meta tis-text-gray">' + f.type.value + ' · ' + shortCarrier(f.carrier.value) + '</div>' +
         '<div style="margin-top:6px">' + badge + dup + conflict + '</div>' +
         '<div style="margin-top:8px;display:flex;gap:6px" onclick="event.stopPropagation()">' +
-          '<button class="sm-choice" onclick="openSheet(' + item.id + ')">แก้</button>' +
-          '<button class="sm-choice" onclick="removeItem(' + item.id + ')">ลบ</button>' +
+          '<button class="sm-choice" onclick="openSheet(' + item.id + ')">Edit</button>' +
+          '<button class="sm-choice" onclick="removeItem(' + item.id + ')">Delete</button>' +
         '</div>' +
       '</div>' +
       '<mat-icon class="mat-icon material-icons tis-text-light">chevron_right</mat-icon></div>';
@@ -659,10 +782,10 @@ function renderQueue() {
 
   const count = st => queue.filter(i => itemStatus(i) === st).length;
   document.getElementById('sm-queue-counts').innerHTML =
-    '<span class="tis-badge-outline-primary tis-badge-sm">ในคิว ' + queue.length + '</span>' +
-    '<span class="tis-badge-outline-success tis-badge-sm">พร้อม ' + count('ready') + '</span>' +
-    (count('review') ? '<span class="tis-badge-outline-warning tis-badge-sm">ต้องตรวจ ' + count('review') + '</span>' : '') +
-    (count('error') ? '<span class="tis-badge-outline-danger tis-badge-sm">อ่านไม่ได้ ' + count('error') + '</span>' : '');
+    '<span class="tis-badge-outline-primary tis-badge-sm">In queue ' + queue.length + '</span>' +
+    '<span class="tis-badge-outline-success tis-badge-sm">Ready ' + count('ready') + '</span>' +
+    (count('review') ? '<span class="tis-badge-outline-warning tis-badge-sm">Needs review ' + count('review') + '</span>' : '') +
+    (count('error') ? '<span class="tis-badge-outline-danger tis-badge-sm">Unreadable ' + count('error') + '</span>' : '');
   document.getElementById('sm-to-approve').disabled = !queue.some(i => i.fields);
 }
 const shortCarrier = c => {
@@ -676,7 +799,11 @@ function openSheet(id) {
   document.body.classList.add('sm-sheet-open');
   track('review_opened', { id });
 }
-function closeSheet() { document.body.classList.remove('sm-sheet-open'); openId = null; }
+function closeSheet() {
+  closePhotoPreview();
+  document.body.classList.remove('sm-sheet-open');
+  openId = null;
+}
 
 function renderSheet() {
   const item = queue.find(i => i.id === openId);
@@ -684,8 +811,8 @@ function renderSheet() {
   document.getElementById('sm-sheet-photo').src = item.photo;
   const flagged = FIELDS.filter(({ k }) => needsAttention(item.fields[k])).length;
   document.getElementById('sm-sheet-sub').textContent = flagged
-    ? 'AI เติมให้แล้ว ' + (FIELDS.length - flagged) + ' จาก ' + FIELDS.length + ' ฟิลด์ · เหลือให้แตะ ' + flagged
-    : 'AI เติมครบทุกฟิลด์ · กดยืนยันได้เลย';
+    ? 'AI filled ' + (FIELDS.length - flagged) + ' of ' + FIELDS.length + ' fields · tap ' + flagged + ' remaining'
+    : 'AI filled every field · you can confirm';
 
   const alerts = [];
   if (item.reviewReasons?.length) {
@@ -694,7 +821,7 @@ function renderSheet() {
   if (item.barcodeConflict && !item.conflictResolved) {
     alerts.push(
       '<div class="tis-alert tis-alert-danger" style="margin:10px 0"><mat-icon class="mat-icon material-icons">compare_arrows</mat-icon>' +
-      'Barcode และ OCR อ่านเลขพัสดุไม่ตรงกัน — เลือกค่าที่จะใช้ก่อนบันทึก' +
+      'Barcode and OCR tracking numbers do not match — pick one before saving' +
       '<div class="sm-chiprow" style="margin-top:8px">' +
         '<button class="sm-choice" onclick="resolveConflict(' + item.id + ',\'' + esc(item.fields.tracking.value) + '\')">OCR: ' + esc(item.fields.tracking.value || '—') + '</button>' +
         '<button class="sm-choice" onclick="resolveConflict(' + item.id + ',\'' + esc(item.barcodeValue) + '\')">Barcode: ' + esc(item.barcodeValue || '—') + '</button>' +
@@ -708,21 +835,21 @@ function renderSheet() {
     const st = f.resolved ? 'auto' : fieldState(f.conf);
     const pct = Math.round(f.conf * 100);
     const badge = f.resolved
-      ? '<span class="tis-badge-outline-primary tis-badge-xs"><mat-icon class="mat-icon material-icons">how_to_reg</mat-icon>คนยืนยันแล้ว</span>'
-      : st === 'auto'  ? '<span class="tis-badge-success tis-badge-xs tis-badge-round"><mat-icon class="mat-icon material-icons">auto_awesome</mat-icon>AI ' + pct + '%</span>'
-      : st === 'check' ? '<span class="tis-badge-warning tis-badge-xs tis-badge-round"><mat-icon class="mat-icon material-icons">visibility</mat-icon>เหลือบดู ' + pct + '%</span>'
-      :                  '<span class="tis-badge-danger tis-badge-xs tis-badge-round"><mat-icon class="mat-icon material-icons">error_outline</mat-icon>เลือกเอง ' + pct + '%</span>';
+      ? '<span class="tis-badge-outline-primary tis-badge-xs">Confirmed by staff</span>'
+      : st === 'auto'  ? '<span class="tis-badge-success tis-badge-xs tis-badge-round">AI ' + pct + '%</span>'
+      : st === 'check' ? '<span class="tis-badge-warning tis-badge-xs tis-badge-round">Glance ' + pct + '%</span>'
+      :                  '<span class="tis-badge-danger tis-badge-xs tis-badge-round">Choose ' + pct + '%</span>';
     const value = f.value
       ? '<div class="sm-field-value">' + f.value + '</div>'
-      : '<div class="sm-field-value is-empty">AI อ่านไม่ออก — เลือกด้านล่าง</div>';
-    const raw = k === 'unit' && f.raw ? '<div class="tis-text-gray" style="font-size:11.5px">AI อ่านได้: “' + f.raw + '”</div>' : '';
+      : '<div class="sm-field-value is-empty">AI could not read this — choose below</div>';
+    const raw = k === 'unit' && f.raw ? '<div class="tis-text-gray" style="font-size:11.5px">AI read: “' + f.raw + '”</div>' : '';
     const chips = '<div class="sm-chiprow">' + (f.alts.length
       ? f.alts.map(a => '<button class="sm-choice ' + (a === f.value ? 'active' : '') +
           '" onclick="pick(' + item.id + ',\'' + k + '\',this.dataset.v)" data-v="' + esc(a) + '">' + a + '</button>').join('') +
-        '<button class="sm-choice" onclick="pick(' + item.id + ',\'' + k + '\',\'อื่น ๆ (เลือกจากรายการเต็ม)\')">อื่น ๆ…</button>'
-      : '<input class="sm-choice" style="min-width:190px;text-align:left" value="' + esc(f.value) + '" placeholder="พิมพ์ทับถ้า AI อ่านผิด"' +
+        '<button class="sm-choice" onclick="pick(' + item.id + ',\'' + k + '\',\'Other (full list)\')">Other…</button>'
+      : '<input class="sm-choice" style="min-width:190px;text-align:left" value="' + esc(f.value) + '" placeholder="Type over if AI is wrong"' +
           ' onchange="typeIn(' + item.id + ',\'' + k + '\',this.value)">' +
-        (opt ? '<button class="sm-choice" onclick="pick(' + item.id + ',\'' + k + '\',\'—\')">ไม่ระบุ</button>' : '')
+        (opt ? '<button class="sm-choice" onclick="pick(' + item.id + ',\'' + k + '\',\'—\')">Not specified</button>' : '')
     ) + '</div>';
     return '<div class="sm-field sm-field--' + st + '">' +
       '<div class="sm-field-head"><span class="sm-field-label">' + label + '</span>' + badge + '</div>' +
@@ -733,8 +860,8 @@ function renderSheet() {
   const btn = document.getElementById('sm-sheet-confirm');
   btn.disabled = blocked;
   btn.querySelector('.mdc-button__label').textContent = blocked
-    ? (item.barcodeConflict && !item.conflictResolved ? 'ยังต้องเลือกเลขพัสดุ' : 'ยังต้องเลือกให้ครบ')
-    : 'ยืนยัน';
+    ? (item.barcodeConflict && !item.conflictResolved ? 'Still need a tracking number' : 'Still need every required field')
+    : 'Confirm';
 }
 const esc = s => (s || '').toString().replace(/[<>"]/g, c => ({ '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
@@ -775,11 +902,11 @@ function renderApprove() {
 
   rows.innerHTML = done.map(item => {
     const f = item.fields, st = itemStatus(item), dup = isDuplicate(f.tracking.value) && !item.dupOk;
-    return '<tr style="' + (dup || item.barcodeConflict && !item.conflictResolved ? 'background:#fef2f2' : st === 'review' ? 'background:#fffbeb' : '') + '">' +
+    return '<tr class="' + (dup || item.barcodeConflict && !item.conflictResolved ? 'is-danger' : st === 'review' ? 'is-review' : '') + '">' +
       '<td><img class="sm-thumb" style="width:56px;height:42px" src="' + item.photo + '" alt=""></td>' +
-      '<td><span class="tis-a">' + (f.tracking.value || '—') + '</span>' + (dup ? '<div><span class="tis-badge-danger tis-badge-xs">มีในระบบแล้ว</span></div>' : '') + '</td>' +
+      '<td><span class="tis-a">' + (f.tracking.value || '—') + '</span>' + (dup ? '<div><span class="tis-badge-danger tis-badge-xs">Already in system</span></div>' : '') + '</td>' +
       '<td class="tis-overflow-ellipsis" style="max-width:150px">' + shortCarrier(f.carrier.value) + '</td>' +
-      '<td>' + (f.recipient.value || '<span class="tis-text-danger">ยังไม่ระบุ</span>') + '</td>' +
+      '<td>' + (f.recipient.value || '<span class="tis-text-danger">Not set</span>') + '</td>' +
       '<td>' + f.unit.value + '</td>' +
       '<td>' + f.type.value + '</td>' +
       '<td>' + conditionBadge(f.condition.value) + '</td>' +
@@ -793,7 +920,7 @@ function renderApprove() {
       '<img class="sm-thumb" src="' + item.photo + '" alt="">' +
       '<div class="sm-qcard-body">' +
         '<div class="sm-qcard-title">' + (f.tracking.value || '—') + '</div>' +
-        '<div class="sm-qcard-meta">' + (f.recipient.value || 'ยังไม่ระบุผู้รับ') + ' · ' + f.unit.value + '</div>' +
+        '<div class="sm-qcard-meta">' + (f.recipient.value || 'Recipient not set') + ' · ' + f.unit.value + '</div>' +
         '<div class="sm-qcard-meta tis-text-gray">' + f.type.value + ' · ' + shortCarrier(f.carrier.value) + '</div>' +
         '<div style="margin-top:6px">' + statusBadge(st) + ' ' + conditionBadge(f.condition.value) + '</div>' +
         '<div style="margin-top:8px">' + rowActions(item, dup) + '</div>' +
@@ -804,7 +931,7 @@ function renderApprove() {
   const autoFields = done.reduce((n, i) => n + FIELDS.filter(({ k }) => fieldState(i.fields[k].conf) === 'auto').length, 0);
   document.getElementById('kpi-total').textContent = done.length;
   document.getElementById('kpi-auto').textContent = totalFields ? Math.round(autoFields / totalFields * 100) + '%' : '—';
-  document.getElementById('kpi-auto-sub').textContent = autoFields + ' จาก ' + totalFields + ' ฟิลด์';
+  document.getElementById('kpi-auto-sub').textContent = autoFields + ' of ' + totalFields + ' fields';
   document.getElementById('kpi-review').textContent = done.filter(i => itemStatus(i) === 'review').length;
   document.getElementById('kpi-saved').textContent = autoFields;
   document.getElementById('done-count').textContent = done.length;
@@ -815,24 +942,24 @@ function renderApprove() {
   const alert = document.getElementById('sm-approve-alert');
   alert.innerHTML =
     (conflicts.length ? '<div class="tis-alert tis-alert-danger"><mat-icon class="mat-icon material-icons">compare_arrows</mat-icon>' +
-      'มี ' + conflicts.length + ' รายการที่ barcode ไม่ตรง OCR — ต้องเลือกเลขพัสดุก่อน Approve</div>' : '') +
+      conflicts.length + ' item(s) have a barcode/OCR mismatch — pick a tracking number before Approve</div>' : '') +
     (dups.length ? '<div class="tis-alert tis-alert-danger"><mat-icon class="mat-icon material-icons">error_outline</mat-icon>' +
-      'พบเลขพัสดุที่มีในระบบแล้ว ' + dups.length + ' รายการ — ลบทิ้งหรือกด “ไม่ซ้ำ” เพื่อยืนยันว่าเป็นพัสดุคนละชิ้น</div>' : '') +
+      dups.length + ' tracking number(s) already exist — delete them or tap “Not a duplicate”</div>' : '') +
     (review.length ? '<div class="tis-alert tis-alert-warning"><mat-icon class="mat-icon material-icons">warning_amber</mat-icon>' +
-      'มี ' + review.length + ' รายการที่ AI ไม่มั่นใจ — แตะ “ตรวจ” เพื่อยืนยันก่อน Approve</div>' : '') +
+      review.length + ' item(s) need a glance — tap Review before Approve</div>' : '') +
     (!dups.length && !review.length && !conflicts.length && done.length ? '<div class="tis-alert tis-alert-success"><mat-icon class="mat-icon material-icons">check_circle</mat-icon>' +
-      'ทุกรายการพร้อมบันทึก — กด Approve เพื่อสร้างพัสดุและแจ้งเตือนผู้รับ</div>' : '');
+      'Every item is ready — tap Approve to create parcels and notify recipients</div>' : '');
 
   const blocked = !done.length || review.length > 0 || dups.length > 0 || conflicts.length > 0;
   document.getElementById('sm-approve-btn').disabled = blocked;
   document.getElementById('sm-approve-note').textContent = blocked
-    ? (done.length ? 'ต้องเคลียร์รายการที่ติดปัญหาก่อนจึงจะ Approve ได้' : 'ยังไม่มีพัสดุในชุดนี้')
-    : 'จะสร้าง ' + done.length + ' รายการเป็นสถานะ Ready for Pick-up และแจ้งเตือนผู้รับทันที';
+    ? (done.length ? 'Clear blocked items before you can Approve' : 'No parcels in this batch yet')
+    : 'Will create ' + done.length + ' parcel(s) as Ready for Pick-up and notify recipients';
 }
 function rowActions(item, dup) {
-  return (dup ? '<button class="sm-choice" onclick="markNotDup(' + item.id + ')">ไม่ซ้ำ</button> ' : '') +
-    '<button class="sm-choice" onclick="openSheet(' + item.id + ')">' + (itemStatus(item) === 'review' ? 'ตรวจ' : 'แก้') + '</button> ' +
-    '<button class="sm-choice" onclick="removeItem(' + item.id + ')">ลบ</button>';
+  return (dup ? '<button class="sm-choice" onclick="markNotDup(' + item.id + ')">Not a duplicate</button> ' : '') +
+    '<button class="sm-choice" onclick="openSheet(' + item.id + ')">' + (itemStatus(item) === 'review' ? 'Review' : 'Edit') + '</button> ' +
+    '<button class="sm-choice" onclick="removeItem(' + item.id + ')">Delete</button>';
 }
 function markNotDup(id) { queue.find(i => i.id === id).dupOk = true; render(); }
 function removeItem(id) { queue = queue.filter(i => i.id !== id); render(); }
@@ -840,8 +967,8 @@ function removeItem(id) { queue = queue.filter(i => i.id !== id); render(); }
 function openConfirm() {
   const done = queue.filter(i => i.fields);
   document.getElementById('sm-confirm-text').innerHTML =
-    'ระบบจะสร้างพัสดุ <b>' + done.length + ' รายการ</b> ในโครงการ <b>AIS Tower 1</b> จุดเก็บ <b>ล็อบบี้ (002)</b> ' +
-    'สถานะ <b>Ready for Pick-up</b> และส่งแจ้งเตือนถึงผู้รับทุกคนทันที';
+    'This will create <b>' + done.length + ' parcel(s)</b> in <b>AIS Tower 1</b>, storage <b>Lobby (002)</b>, ' +
+    'status <b>Ready for Pick-up</b>, and notify every recipient.';
   document.body.classList.add('sm-dialog-open');
 }
 function closeConfirm() { document.body.classList.remove('sm-dialog-open'); }
@@ -864,8 +991,8 @@ const conditionBadge = c => c === 'Appears Fine'
   ? '<span class="tis-badge-outline-success tis-badge-xs">' + c + '</span>'
   : '<span class="tis-badge-outline-warning tis-badge-xs">' + (c || '—') + '</span>';
 const statusBadge = st => st === 'ready'
-  ? '<span class="tis-badge-sr-so-approved tis-badge-sm tis-badge-round"><mat-icon class="mat-icon material-icons">check_circle</mat-icon>พร้อมบันทึก</span>'
-  : '<span class="tis-badge-sr-so-onhold tis-badge-sm tis-badge-round"><mat-icon class="mat-icon material-icons">touch_app</mat-icon>ต้องตรวจ</span>';
+  ? '<span class="tis-badge-sr-so-approved tis-badge-sm tis-badge-round">Ready to save</span>'
+  : '<span class="tis-badge-sr-so-onhold tis-badge-sm tis-badge-round">Needs review</span>';
 
 function go(screen) {
   if (screen === 'review') {
@@ -884,21 +1011,29 @@ function show(screen) {
   document.querySelectorAll('.sm-screen').forEach(s => s.classList.remove('active'));
   const el = document.getElementById('screen-' + screen);
   if (el) el.classList.add('active');
-  document.querySelector('mat-drawer-content').scrollTop = 0;
+  document.getElementById('pv-main').scrollIntoView({ block: 'start' });
 }
 
 function flipCamera() { return camera.flip(); }
 function toggleTorch() { return camera.toggleTorch(); }
 
-window.addEventListener('pagehide', () => stopCameraTracks());
+window.addEventListener('pagehide', () => {
+  stopCameraTracks();
+  disposeOcrWorker();
+});
 window.addEventListener('beforeunload', () => stopCameraTracks());
+document.addEventListener('keydown', event => {
+  if (event.key !== 'Escape') return;
+  const box = document.getElementById('sm-photo-lightbox');
+  if (box && !box.hidden) {
+    event.preventDefault();
+    closePhotoPreview();
+  }
+});
+
 document.addEventListener('visibilitychange', () => {
   const scannerOpen = !document.getElementById('sm-scanner').hidden;
-  if (document.hidden) {
-    loopPaused = true;
-    return;
-  }
-  loopPaused = false;
+  if (document.hidden) return;
   if (scannerOpen && !camera.hasLiveTrack() && !analyzing) continueToCamera();
 });
 
@@ -912,30 +1047,36 @@ Promise.race([
 Object.assign(window, {
   continueToCamera, closeScanner, captureNow, flipCamera, toggleTorch, retakeCapture, useThisLabel,
   approveCapture, openCropEditor, applyCropEdit, cancelCropEdit, approveCropEdit, retakeFromCropEditor,
+  downloadPreviewImage, downloadSheetPhoto, previewSheetPhoto, closePhotoPreview,
   pickFiles, filesPicked, dropFiles, showManualEntry, hideManualEntry, submitManualEntry,
   retry, resetDemo, clearQueue, dropItem, openSheet, closeSheet, pick, typeIn, confirmItem,
   resolveConflict, renderApprove, openConfirm, closeConfirm, doApprove, go, removeItem, markNotDup,
   fieldState, matchUnits, isDuplicate, itemStatus, fromExtraction, MOCK_SHOTS, FIELDS, buildItem, seedDemo, queue,
+  prepareCapture, analyzeLabelText,
 });
 
 (function selfCheck() {
   let ok = true;
   const is = (cond, msg) => { if (!cond) { ok = false; console.assert(cond, msg); } };
-  is(fieldState(0.97) === 'auto',  'สูงกว่าเกณฑ์ต้องเติมอัตโนมัติ');
-  is(fieldState(0.90) === 'auto',  'ขอบ 0.90 นับเป็น auto');
-  is(fieldState(0.89) === 'check', 'ต่ำกว่า 0.90 ต้องให้คนเหลือบ');
-  is(fieldState(0.60) === 'check', 'ขอบ 0.60 นับเป็น check');
-  is(fieldState(0.59) === 'pick',  'ต่ำกว่า 0.60 ต้องบังคับเลือก');
-  is(matchUnits('ชั้น 21 ฝ่ายการตลาด')[0].includes('21F-MKT'), 'ตัวเลขชั้นต้องชนะ');
-  is(matchUnits('Floor 18 Finance')[0].includes('18F-FIN'),     'คำภาษาอังกฤษต้อง match ได้');
-  is(isDuplicate('LEXPU0703471485'), 'ต้องจับเลขพัสดุที่มีในระบบแล้วได้');
+  is(fieldState(0.97) === 'auto',  'above threshold is auto');
+  is(fieldState(0.90) === 'auto',  '0.90 boundary is auto');
+  is(fieldState(0.89) === 'check', 'below 0.90 is glance');
+  is(fieldState(0.60) === 'check', '0.60 boundary is glance');
+  is(fieldState(0.59) === 'pick',  'below 0.60 must choose');
+  is(matchUnits('Floor 21 Marketing')[0].includes('21F-MKT'), 'floor digits should win');
+  is(matchUnits('Floor 18 Finance')[0].includes('18F-FIN'),     'English unit names should match');
+  is(isDuplicate('LEXPU0703471485'), 'existing tracking should be flagged');
   const dirty = buildItem(MOCK_SHOTS[4], 98); dirty.status = 'read';
-  is(itemStatus(dirty) === 'review', 'มีฟิลด์ที่อ่านไม่ออก = ต้องตรวจ');
+  is(itemStatus(dirty) === 'review', 'unreadable field needs review');
   const conflicted = buildItem(MOCK_SHOTS[0], 97); conflicted.status = 'read'; conflicted.barcodeConflict = true;
-  is(itemStatus(conflicted) === 'review', 'barcode conflict ต้องบังคับตรวจ');
+  is(itemStatus(conflicted) === 'review', 'barcode conflict needs review');
   conflicted.conflictResolved = true; conflicted.acknowledged = true;
-  is(itemStatus(conflicted) === 'ready', 'แก้ conflict แล้วต้องพร้อม');
-  console.log(ok ? '✓ self-check ผ่าน (confidence, units, duplicates, barcode conflict)' : '✗ self-check ล้มเหลว');
+  is(itemStatus(conflicted) === 'ready', 'resolved conflict is ready');
+  is(analyzeLabelText('Kerry Express LEXPU0703623961').ok, 'carrier and tracking pass local OCR check');
+  is(analyzeLabelText('FLASH EXPRESS').ok, 'carrier name alone passes local OCR check');
+  is(!!analyzeLabelText('DHL 12/09/2026 1.2kg').date, 'date is recorded as extra context');
+  is(!analyzeLabelText('steering wheel dashboard').ok, 'non-label text fails local OCR check');
+  console.log(ok ? '✓ self-check passed (confidence, units, duplicates, barcode conflict, local OCR)' : '✗ self-check failed');
 })();
 
 render();

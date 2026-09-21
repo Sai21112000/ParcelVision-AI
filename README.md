@@ -1,17 +1,16 @@
 # ParcelVision AI
 
-Phone-friendly shipping-label scanner. Open the live demo on a device over HTTPS, allow the camera, then Approve / Retake / Adjust crop.
+ScanKit-style parcel receiving: a marketing home page, plus a browser demo with Snap & Approve and parcel management.
 
-**Live demo:** https://sai21112000.github.io/ParcelVision-AI/
+**Live site:** https://sai21112000.github.io/ParcelVision-AI/
 
-On GitHub Pages, Gemini is off (static host). The UI still captures, crops, and queues labels in demo mode.
+On GitHub Pages, Gemini is off (static host). The demo still captures, crops, and queues labels.
 
 ## Local (real Gemini)
 
 ```bash
 # .env next to serve.mjs — never commit this file
 # GEMINI_API_KEY=...
-# GEMINI_MODEL=gemini-3.8-flash
 node serve.mjs
 ```
 
@@ -19,5 +18,8 @@ Open http://localhost:8899/
 
 ## Layout
 
-- `docs/` — GitHub Pages site (scanner + parcel list + CSS + modules)
-- `serve.mjs` — local preview and `/api/parcel-ingestions` proxy
+- `docs/index.html` — home
+- `docs/demo.html` — Demo (`#scan` Snap & Approve, `#parcels` parcel list)
+- `docs/parcel-list.html` — redirect to `demo.html#parcels`
+- `docs/ingestion/` — camera / OpenCV / crop
+- `serve.mjs` — local preview and Gemini proxy

@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Demo · ParcelVision AI</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+<link rel="stylesheet" href="parcelvision.css">
+</head>
+<body>
+<header class="pv-nav">
+  <a class="pv-brand" href="index.html">ParcelVision <span>AI</span></a>
+  <a href="index.html">Home</a>
+  <a class="is-active" href="demo.html">Demo</a>
+</header>
+
+<nav class="demo-tabs" aria-label="Demo views">
+  <button class="tis-pill active" type="button" id="tab-scan" onclick="demoTab('scan')">Scan</button>
+  <button class="tis-pill" type="button" id="tab-parcels" onclick="demoTab('parcels')">Parcels</button>
+</nav>
+
+<div class="demo-panel" id="demo-scan">
+<main class="pv-main" id="pv-main">
+  <div class="tis-page-header">
+    <div>
+      <h1 class="pv-title">Snap &amp; Approve</h1>
+      <p class="pv-lead">Scan a shipping label, let AI fill the fields, then approve the batch.</p>
+    </div>
+    <button class="pv-btn pv-btn-ghost" type="button" onclick="resetDemo()">Restart demo</button>
+  </div>
+
+  <div id="sm-steps">
+    <button class="tis-pill active" data-screen="capture">1 · Capture &amp; read</button>
+    <button class="tis-pill" data-screen="review">2 · Review uncertain fields</button>
+    <button class="tis-pill" data-screen="approve">3 · Approve batch</button>
+    <button class="tis-pill" data-screen="done">4 · Done</button>
+  </div>
+
+  <div class="sm-screen active" id="screen-capture">
+    <div class="tis-help-box tis-help-box--blue">
+      <b>Photograph the parcel label and let AI fill the form.</b>
+      Set the project and storage location once, then keep scanning. Gemini reads tracking, carrier, recipient, floor/department, size, and condition. Staff only tap fields the model is unsure about.
+    </div>
+
+    <div class="tis-section">
+      <div class="tis-label">Session settings</div>
+      <div class="pv-fields">
+        <div class="pv-field"><label>Project</label><div class="value">AIS Tower 1 (Phahonyothin)</div></div>
+        <div class="pv-field"><label>Storage location</label><div class="value">Lobby (002)</div></div>
+        <div class="pv-field"><label>Arrived on</label><div class="value">18/09/2026 14:17</div></div>
+      </div>
+      <label class="pv-check"><input type="checkbox" checked> Notify the recipient immediately on Approve</label>
+    </div>
+
+    <div class="sm-capture-grid">
+      <div class="tis-section" style="margin:0">
+        <div class="tis-label">Scan parcel label <span id="sm-mode"></span></div>
+
+        <div class="sm-capture-col">
+        <div class="sm-capture-processing" id="sm-capture-processing" hidden>
+          <div class="sm-spinner" aria-hidden="true"></div>
+          <p id="sm-processing-text">Checking the label…</p>
+        </div>
+
+        <div class="sm-camera-entry" id="sm-camera-entry">
+          <div class="sm-scan-mark" aria-hidden="true"></div>
+          <div style="font-size:22px;font-weight:800;margin-top:12px">From photo to clean scan</div>
+          <div class="tis-text-gray" style="margin-top:6px">Align the shipping label in the frame, snap once, then Approve. Keep recipient details and the barcode visible.</div>
+          <div class="sm-camera-entry-actions">
+            <button class="pv-btn" type="button" onclick="continueToCamera()"><span class="mdc-button__label">Start scanning</span></button>
+            <button class="pv-btn pv-btn-ghost" type="button" onclick="pickFiles()"><span class="mdc-button__label">Upload image</span></button>
+            <button class="pv-btn pv-btn-ghost" type="button" onclick="showManualEntry()"><span class="mdc-button__label">Enter manually</span></button>
+          </div>
+        </div>
+
+        <div class="sm-scanner" id="sm-scanner" hidden>
+          <div class="sm-view" id="sm-view" data-quality="neutral">
+            <video id="sm-cam" playsinline webkit-playsinline muted autoplay></video>
+            <button class="sm-cam-close" type="button" onclick="closeScanner()" title="Close camera" aria-label="Close camera">×</button>
+            <div class="sm-view-mask"></div>
+            <div class="sm-view-frame"><i></i><i></i><i></i><i></i></div>
+            <svg class="sm-view-overlay" id="sm-overlay" viewBox="0 0 1 1" preserveAspectRatio="none" aria-hidden="true">
+              <defs>
+                <mask id="sm-poly-mask">
+                  <rect width="1" height="1" fill="white"/>
+                  <polygon id="sm-poly-cut" fill="black" points="0,0 0,0 0,0 0,0"/>
+                </mask>
+              </defs>
+              <rect width="1" height="1" fill="rgba(0,0,0,.45)" mask="url(#sm-poly-mask)"/>
+              <polygon id="sm-poly" class="sm-poly" points="0,0 0,0 0,0 0,0"/>
+            </svg>
+            <div class="sm-view-coach" id="sm-view-coach">Center the shipping label in the frame</div>
+            <div class="sm-view-hint">
+              <div id="sm-cam-msg">Place the complete shipping label inside the frame.</div>
+            </div>
+          </div>
+          <div class="sm-quality" id="sm-quality" data-level="neutral" role="status" aria-live="polite">
+            <span class="sm-quality-dot"></span><span id="sm-quality-text">Align the label, then tap SNAP LABEL</span>
+          </div>
+          <div class="sm-row sm-row-snap">
+            <button class="sm-choice" type="button" onclick="flipCamera()">Flip camera</button>
+            <button class="sm-snap" id="sm-snap" type="button" onclick="captureNow()">SNAP LABEL</button>
+            <button class="sm-choice" type="button" onclick="toggleTorch()">Flashlight</button>
+          </div>
+          <div class="sm-row">
+            <button class="sm-choice" type="button" onclick="pickFiles()">Upload image</button>
+            <button class="sm-choice" type="button" onclick="showManualEntry()">Enter tracking manually</button>
+          </div>
+        </div>
+
+        <div class="sm-capture-preview" id="sm-capture-preview" hidden>
+          <div style="font-weight:800;margin-bottom:8px">Label captured</div>
+          <div class="sm-preview-grid">
+            <figure>
+              <img id="sm-preview-crop" alt="Enhanced label crop">
+              <figcaption class="sm-preview-caption">
+                <span class="tis-text-gray">Enhanced label</span>
+                <button class="sm-download" type="button" onclick="downloadPreviewImage('crop')">Download</button>
+              </figcaption>
+            </figure>
+            <figure>
+              <img id="sm-preview-original" alt="Original capture">
+              <figcaption class="sm-preview-caption">
+                <span class="tis-text-gray">Original photo</span>
+                <button class="sm-download" type="button" onclick="downloadPreviewImage('original')">Download</button>
+              </figcaption>
+            </figure>
+          </div>
+          <div class="sm-ocr-warning" id="sm-ocr-warning" hidden></div>
+          <div class="sm-ocr-extras" id="sm-ocr-extras" hidden></div>
+          <div class="sm-ocr-pane">
+            <div class="tis-text-gray" style="font-size:12px;margin-bottom:6px">Extracted text</div>
+            <pre id="sm-ocr-text">Reading label text…</pre>
+          </div>
+          <div class="sm-quality-list" id="sm-preview-quality"></div>
+          <div class="sm-row" style="justify-content:flex-start">
+            <button class="pv-btn" type="button" id="sm-use-label" onclick="approveCapture()"><span class="mdc-button__label">Approve</span></button>
+            <button class="pv-btn pv-btn-ghost" type="button" onclick="retakeCapture()"><span class="mdc-button__label">Retake with camera</span></button>
+            <button class="pv-btn pv-btn-ghost" type="button" onclick="openCropEditor()"><span class="mdc-button__label">Adjust crop</span></button>
+          </div>
+        </div>
+
+        <div id="sm-manual-entry" hidden style="margin-top:12px">
+          <div class="tis-label">Enter tracking number</div>
+          <input class="mat-mdc-input-element" id="sm-manual-tracking" placeholder="e.g. LEXPU0703623961">
+          <div class="sm-row" style="justify-content:flex-start">
+            <button class="pv-btn" type="button" onclick="submitManualEntry()"><span class="mdc-button__label">Add to queue</span></button>
+            <button class="pv-btn pv-btn-ghost" type="button" onclick="hideManualEntry()"><span class="mdc-button__label">Cancel</span></button>
+          </div>
+        </div>
+
+        <canvas id="sm-canvas" hidden></canvas>
+        <input type="file" id="sm-file" accept="image/*" multiple hidden onchange="filesPicked(this)">
+
+        <div class="sm-drop" onclick="pickFiles()" ondragover="event.preventDefault()" ondrop="dropFiles(event)">
+          Drag an image here, or click to choose a file — for counters without a camera.
+        </div>
+        <div class="tis-help-box tis-help-box--amber" style="margin-top:12px">
+          Place the <b>complete shipping label</b> in the frame and tap SNAP LABEL, or upload a photo. A local text check runs in the browser. Gemini runs only after you Approve.
+        </div>
+        </div>
+      </div>
+
+      <div class="tis-section" style="margin:0">
+        <div class="tis-page-header" style="margin-bottom:12px">
+          <div class="tis-label" style="margin:0">This session’s queue</div>
+          <div class="flex items-center gap-2" id="sm-queue-counts"></div>
+        </div>
+        <div class="sm-queue" id="sm-queue"></div>
+        <div class="pv-empty" id="sm-queue-empty">
+          <h5>No parcels in the queue yet</h5>
+          <p>Open the camera to start receiving parcels. You can scan several in a row.</p>
+        </div>
+        <div class="sm-actionbar" style="margin-top:14px">
+          <button class="pv-btn pv-btn-ghost" type="button" onclick="clearQueue()"><span class="mdc-button__label">Clear queue</span></button>
+          <button class="pv-btn" type="button" id="sm-to-approve" onclick="go('approve')"><span class="mdc-button__label">Review and Approve</span></button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="sm-screen" id="screen-approve">
+    <div class="pv-kpi">
+      <article>
+        <div class="tis-text-gray">Parcels in this batch</div>
+        <b id="kpi-total">0</b>
+        <div class="tis-text-gray">AIS Tower 1 · Lobby (002)</div>
+      </article>
+      <article>
+        <div class="tis-text-gray">Filled by AI</div>
+        <b id="kpi-auto">0</b>
+        <div class="tis-text-gray" id="kpi-auto-sub">of 0 fields</div>
+      </article>
+      <article>
+        <div class="tis-text-gray">Needs review</div>
+        <b id="kpi-review">0</b>
+        <div class="tis-text-gray">items the AI is unsure about</div>
+      </article>
+      <article>
+        <div class="tis-text-gray">Typing saved</div>
+        <b id="kpi-saved">0</b>
+        <div class="tis-text-gray">fields you did not have to type</div>
+      </article>
+    </div>
+    <div id="sm-approve-alert"></div>
+    <div class="tis-section">
+      <div class="tis-page-header">
+        <div class="tis-label" style="margin:0">Parcels that will be created</div>
+        <button class="pv-btn pv-btn-ghost" type="button" onclick="go('capture')">Scan more</button>
+      </div>
+      <div class="sm-approve-table">
+        <table class="pv-table">
+          <thead>
+            <tr>
+              <th>Photo</th><th>Tracking No.</th><th>Carrier</th><th>Recipient</th>
+              <th>Floor / dept</th><th>Type</th><th>Condition</th><th>Status</th><th></th>
+            </tr>
+          </thead>
+          <tbody id="sm-approve-rows"></tbody>
+        </table>
+      </div>
+      <div class="sm-approve-cards" id="sm-approve-cards"></div>
+      <div class="sm-actionbar" style="margin-top:16px">
+        <span class="tis-text-gray" style="margin-right:auto" id="sm-approve-note"></span>
+        <button class="pv-btn pv-btn-ghost" type="button" onclick="go('capture')"><span class="mdc-button__label">Back</span></button>
+        <button class="pv-btn" type="button" id="sm-approve-btn" onclick="openConfirm()"><span class="mdc-button__label">Approve &amp; notify</span></button>
+      </div>
+    </div>
+  </div>
+
+  <div class="sm-screen" id="screen-done">
+    <div class="tis-help-box tis-help-box--green">
+      <b>Parcels saved.</b> Each item is now <span class="tis-badge-outline-success tis-badge-sm">Ready for Pick-up</span> and recipients have been notified.
+    </div>
+    <div class="pv-kpi">
+      <article><div class="tis-text-gray">Batch ID</div><b id="done-batch">1621</b></article>
+      <article><div class="tis-text-gray">Parcel count</div><b id="done-count">0</b></article>
+      <article><div class="tis-text-gray">Project</div><b>AIS Tower 1</b></article>
+      <article><div class="tis-text-gray">Storage</div><b>Lobby (002)</b></article>
+    </div>
+    <div class="tis-label">Created parcel IDs</div>
+    <table class="pv-table">
+      <thead><tr><th>Parcel ID</th><th>Tracking No.</th><th>Recipient</th><th>Floor / dept</th><th>Status</th></tr></thead>
+      <tbody id="done-rows"></tbody>
+    </table>
+    <div class="sm-actionbar" style="margin-top:18px">
+      <a class="pv-btn pv-btn-ghost" href="#parcels" onclick="demoTab('parcels')"><span class="mdc-button__label">Back to parcel list</span></a>
+      <button class="pv-btn pv-btn-ghost" type="button" onclick="resetDemo()"><span class="mdc-button__label">Receive another batch</span></button>
+      <button class="pv-btn" type="button"><span class="mdc-button__label">Print slip</span></button>
+    </div>
+  </div>
+</main>
+</div>
+
+<div class="demo-panel" id="demo-parcels" hidden>
+<main class="pv-main">
+  <div class="tis-page-header">
+    <div>
+      <h1 class="pv-title">Parcels</h1>
+      <p class="pv-lead">Track intake, pickup, and overdue items for AIS Tower 1.</p>
+    </div>
+    <div class="sm-row" style="margin:0;justify-content:flex-end">
+      <button class="pv-btn pv-btn-ghost" type="button" onclick="exportCsv()">Export</button>
+      <a class="pv-btn" href="#scan" onclick="demoTab('scan')">Add new parcel</a>
+    </div>
+  </div>
+
+  <div class="pl-kpi" id="pl-kpi">
+    <div class="pl-kpi-card"><div class="pl-kpi-value" id="pl-kpi-ready">0</div><div class="pl-kpi-label">Awaiting pickup</div></div>
+    <div class="pl-kpi-card"><div class="pl-kpi-value" id="pl-kpi-delivered">0</div><div class="pl-kpi-label">Delivered today</div></div>
+    <div class="pl-kpi-card pl-kpi-card--accent"><div class="pl-kpi-value" id="pl-kpi-overdue">0</div><div class="pl-kpi-label">Overdue &gt; 7 days</div></div>
+    <div class="pl-kpi-card pl-kpi-card--danger"><div class="pl-kpi-value" id="pl-kpi-cancelled">0</div><div class="pl-kpi-label">Cancelled / returned</div></div>
+  </div>
+
+  <div class="tis-section">
+    <div class="pl-filters">
+      <label class="pl-field">
+        <span>Project</span>
+        <div class="value">AIS Tower 1 (Phahonyothin)</div>
+      </label>
+      <label class="pl-field">
+        <span>Status</span>
+        <select id="pl-status" onchange="renderParcels()">
+          <option value="">All</option>
+          <option value="ready">Ready for Pick-up</option>
+          <option value="delivered">Delivered</option>
+          <option value="onhold">Awaiting Approval</option>
+          <option value="cancelled">Cancelled</option>
+          <option value="returned">Returned</option>
+        </select>
+      </label>
+      <label class="pl-field pl-field-grow">
+        <span>Search</span>
+        <input id="pl-q" oninput="renderParcels()" placeholder="Tracking, recipient, or floor">
+      </label>
+    </div>
+
+    <div class="pl-toolbar">
+      <span class="tis-filter-badge tis-badge-sm" id="pl-filter-badge">
+        <span id="pl-filter-count">0</span> filters applied
+      </span>
+    </div>
+
+    <div id="pl-selection-hint" hidden>
+      <div class="tis-alert tis-alert-info">
+        <span id="pl-selection-text">1 item selected</span> — use the buttons below for bulk actions
+        <span class="pl-hint-actions">
+          <button class="sm-choice" type="button" onclick="bulkDeliver()">Deliver all</button>
+          <button class="sm-choice is-danger" type="button" onclick="clearSelection()">Clear</button>
+        </span>
+      </div>
+    </div>
+
+    <div class="pl-desktop">
+      <table class="pv-table">
+        <thead>
+          <tr>
+            <th style="width:44px"><input type="checkbox" id="pl-check-all" onclick="toggleAll()" aria-label="Select all"></th>
+            <th style="width:60px">Photo</th>
+            <th>Tracking #</th>
+            <th>Carrier</th>
+            <th>Recipient</th>
+            <th>Floor / dept</th>
+            <th>Arrived</th>
+            <th>Status</th>
+            <th class="text-right">Actions</th>
+          </tr>
+        </thead>
+        <tbody id="pl-rows"></tbody>
+      </table>
+      <div class="pv-empty" id="pl-empty" hidden>
+        <h5>No parcels match these filters</h5>
+        <p>Clear filters or receive a new parcel to get started.</p>
+        <a class="pv-btn" href="#scan" onclick="demoTab('scan')">Add new parcel</a>
+      </div>
+      <div class="pl-paginator" id="pl-paginator">
+        <span>Items per page: 10</span>
+        <span id="pl-range">1 – 10 of 0</span>
+      </div>
+    </div>
+
+    <div class="pl-cards" id="pl-cards"></div>
+  </div>
+</main>
+</div>
+
+<div class="sm-scrim" onclick="closeSheet()"></div>
+<div class="sm-sheet" id="sm-sheet">
+  <div class="sm-sheet-head">
+    <div style="flex:1">
+      <h3 style="margin:0;font-size:16px">Review AI values</h3>
+      <div class="tis-text-gray" id="sm-sheet-sub">&nbsp;</div>
+    </div>
+    <button class="sm-choice" type="button" onclick="closeSheet()">Close</button>
+  </div>
+  <div class="sm-sheet-body">
+    <figure class="sm-sheet-photo-wrap">
+      <img class="sm-sheet-photo" id="sm-sheet-photo" alt="Parcel photo" onclick="previewSheetPhoto()">
+      <figcaption class="sm-preview-caption">
+        <button class="sm-download" type="button" onclick="previewSheetPhoto()">Preview</button>
+        <button class="sm-download" type="button" onclick="downloadSheetPhoto()">Download</button>
+      </figcaption>
+    </figure>
+    <div id="sm-sheet-alerts"></div>
+    <div id="sm-sheet-fields"></div>
+    <div class="pv-field" style="margin-top:12px">
+      <label>Remarks (optional)</label>
+      <input class="mat-mdc-input-element" placeholder="The only field you may need to type">
+    </div>
+  </div>
+  <div class="sm-sheet-foot">
+    <button class="tis-btn-danger" type="button" onclick="dropItem()"><span class="mdc-button__label">Delete this photo</span></button>
+    <span style="flex:1"></span>
+    <button class="pv-btn" type="button" id="sm-sheet-confirm" onclick="confirmItem()"><span class="mdc-button__label">Confirm</span></button>
+  </div>
+</div>
+
+<div class="sm-photo-lightbox" id="sm-photo-lightbox" hidden onclick="if(event.target===this)closePhotoPreview()">
+  <div class="sm-photo-lightbox-card">
+    <img id="sm-photo-lightbox-img" alt="Parcel photo preview">
+    <div class="sm-photo-lightbox-actions">
+      <button class="pv-btn" type="button" onclick="downloadSheetPhoto()"><span class="mdc-button__label">Download</span></button>
+      <button class="pv-btn pv-btn-ghost" type="button" onclick="closePhotoPreview()"><span class="mdc-button__label">Close</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="sm-crop-editor" id="sm-crop-editor" hidden onclick="if(event.target===this)cancelCropEdit()">
+  <div class="sm-crop-editor-card">
+    <div style="font-weight:800;margin-bottom:8px">Adjust crop</div>
+    <div class="tis-text-gray" style="margin-bottom:10px">Starts on the label frame. Drag inside the box to move it, or drag a corner to reshape. Text is re-read only when you apply.</div>
+    <canvas id="sm-crop-canvas" width="640" height="360"></canvas>
+    <div class="sm-crop-editor-actions">
+      <button class="pv-btn" type="button" onclick="applyCropEdit()"><span class="mdc-button__label">Apply crop</span></button>
+      <button class="pv-btn pv-btn-ghost" type="button" onclick="cancelCropEdit()"><span class="mdc-button__label">Cancel</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="sm-dialog-wrap" onclick="if(event.target===this)closeConfirm()">
+  <div class="pv-dialog">
+    <h3 style="margin-top:0">Confirm parcel save</h3>
+    <div id="sm-confirm-text"></div>
+    <div class="sm-actionbar" style="margin-top:16px">
+      <button class="pv-btn pv-btn-ghost" type="button" onclick="closeConfirm()"><span class="mdc-button__label">Cancel</span></button>
+      <button class="pv-btn" type="button" onclick="doApprove()"><span class="mdc-button__label">Confirm Approve</span></button>
+    </div>
+  </div>
+</div>
+
+<div class="pl-dialog-wrap" onclick="if (event.target === this) closeDialog()">
+  <div class="pv-dialog">
+    <h3 style="margin-top:0">Confirm parcel delivery</h3>
+    <div id="pl-dialog-text"></div>
+    <div class="sm-actionbar" style="margin-top:16px">
+      <button class="pv-btn pv-btn-ghost" type="button" onclick="closeDialog()">Cancel</button>
+      <button class="pv-btn" type="button" onclick="confirmDeliver()">Confirm delivery</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function demoTab(name) {
+  const scan = name !== 'parcels';
+  document.getElementById('demo-scan').hidden = !scan;
+  document.getElementById('demo-parcels').hidden = scan;
+  document.getElementById('tab-scan').classList.toggle('active', scan);
+  document.getElementById('tab-parcels').classList.toggle('active', !scan);
+  if (!scan && typeof closeScanner === 'function') closeScanner();
+  const hash = scan ? '#scan' : '#parcels';
+  if (location.hash !== hash) history.replaceState(null, '', hash);
+}
+function applyDemoHash() {
+  demoTab(location.hash === '#parcels' ? 'parcels' : 'scan');
+}
+window.addEventListener('hashchange', applyDemoHash);
+applyDemoHash();
+</script>
+
+<script>
+const STATUS_META = {
+  ready:     { label: 'Ready for Pick-up',  cls: 'tis-badge-sr-so-approved' },
+  delivered: { label: 'Delivered',          cls: 'tis-badge-sr-so-completed' },
+  onhold:    { label: 'Awaiting Approval',  cls: 'tis-badge-sr-so-onhold' },
+  cancelled: { label: 'Cancelled',          cls: 'tis-badge-sr-so-cancelled' },
+  returned:  { label: 'Returned',           cls: 'tis-badge-sr-so-closed' },
+};
+const CARRIERS_SHORT = {
+  LEL:      'LEL Express',
+  Flash:    'Flash Express',
+  Kerry:    'Kerry Express',
+  Thai:     'Thailand Post',
+  JT:       'J&T Express',
+  SCG:      'SCG Express',
+  DHL:      'DHL Express',
+  Shopee:   'Shopee',
+};
+
+const TODAY = new Date('2026-09-18T09:00:00+07:00');
+const daysAgo = n => new Date(TODAY.getTime() - n * 86400e3);
+const fmt = d => d.toLocaleString('en-GB', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(/,/, '');
+
+const PARCELS = [
+  { id: 15628, tracking: 'LEXPU0703623961', carrier: 'LEL',    recipient: 'K.Tomoya Sakai',     unit: '21F-MKT', unitName: 'Marketing',        arrived: daysAgo(0),  status: 'ready',     type: 'Small parcel' },
+  { id: 15627, tracking: 'TH260330625225F', carrier: 'Thai',   recipient: 'K.Pitcha W.',        unit: '18F-FIN', unitName: 'Finance',          arrived: daysAgo(0),  status: 'ready',     type: 'Envelope' },
+  { id: 15626, tracking: 'FL2609181004TH',  carrier: 'Flash',  recipient: 'K.Priwach T.',       unit: '24F-ENG', unitName: 'Engineering',      arrived: daysAgo(0),  status: 'ready',     type: 'Large parcel' },
+  { id: 15625, tracking: 'LEXPU0703471485', carrier: 'LEL',    recipient: 'K.Ratchadawan P.',   unit: '21F-MKT', unitName: 'Marketing',        arrived: daysAgo(1),  status: 'delivered', type: 'Medium parcel', deliveredBy: 'K.Ratchadawan P.', deliveredAt: daysAgo(1) },
+  { id: 15624, tracking: 'JT2609170822TH',  carrier: 'JT',     recipient: 'K.Jirayu M.',        unit: '9F-CS',   unitName: 'Customer Service', arrived: daysAgo(1),  status: 'delivered', type: 'Small parcel', deliveredBy: 'K.Jirayu M.',      deliveredAt: daysAgo(1) },
+  { id: 15623, tracking: 'SCG2609187741',   carrier: 'SCG',    recipient: '— Unknown recipient —',   unit: '12F-HRD', unitName: 'HR',               arrived: daysAgo(2),  status: 'onhold',    type: 'Bag' },
+  { id: 15622, tracking: 'KE260916TH123',   carrier: 'Kerry',  recipient: 'K.Monthartip K.',    unit: '12F-HRD', unitName: 'HR',               arrived: daysAgo(3),  status: 'delivered', type: 'Small parcel', deliveredBy: 'K.Monthartip K.',  deliveredAt: daysAgo(3) },
+  { id: 15621, tracking: 'DHL9182735510',   carrier: 'DHL',    recipient: 'K.Theerapat K.',     unit: '24F-ENG', unitName: 'Engineering',      arrived: daysAgo(8),  status: 'ready',     type: 'Medium parcel' },
+  { id: 15620, tracking: 'SP260910114892',  carrier: 'Shopee', recipient: 'K.Nattapong S.',     unit: '21F-MKT', unitName: 'Marketing',        arrived: daysAgo(9),  status: 'ready',     type: 'Small parcel' },
+  { id: 15619, tracking: 'FL2609091728TH',  carrier: 'Flash',  recipient: 'K.Ornuma L.',        unit: '18F-FIN', unitName: 'Finance',          arrived: daysAgo(10), status: 'returned',  type: 'Medium parcel' },
+  { id: 15618, tracking: 'TH260908F5511',   carrier: 'Thai',   recipient: 'K.Aphirak N.',       unit: '24F-ENG', unitName: 'Engineering',      arrived: daysAgo(11), status: 'cancelled', type: 'Envelope' },
+  { id: 15617, tracking: 'LEL260907TH991',  carrier: 'LEL',    recipient: 'K.Benjaporn R.',     unit: '9F-CS',   unitName: 'Customer Service', arrived: daysAgo(12), status: 'delivered', type: 'Medium parcel', deliveredBy: 'K.Benjaporn R.',   deliveredAt: daysAgo(11) },
+];
+
+let selected = new Set();
+let dialogId = null;
+
+function parcelPhoto(seed) {
+  const hue = [28, 34, 20, 40, 15, 45][seed % 6];
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="180">' +
+    '<rect width="240" height="180" fill="#2b2f33"/>' +
+    '<rect x="26" y="34" width="188" height="120" rx="6" fill="hsl(' + hue + ',45%,58%)"/>' +
+    '<rect x="26" y="78" width="188" height="10" fill="hsl(' + hue + ',40%,48%)" opacity=".7"/>' +
+    '<rect x="58" y="52" width="124" height="74" rx="3" fill="#fdfdfd"/>' +
+    '<rect x="66" y="60" width="70" height="6" fill="#9aa0a6"/>' +
+    '<rect x="66" y="72" width="46" height="5" fill="#c3c7cb"/>' +
+    Array.from({ length: 22 }, (_, i) => '<rect x="' + (67 + i * 5) + '" y="88" width="' + (i % 3 ? 2 : 3) + '" height="22" fill="#1c1f23"/>').join('') +
+    '<rect x="66" y="114" width="86" height="5" fill="#9aa0a6"/>' +
+    '</svg>';
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
+
+const isOverdue = p => p.status === 'ready' && (TODAY - p.arrived) > 7 * 86400e3;
+
+function filtered() {
+  const status = document.getElementById('pl-status').value;
+  const q = document.getElementById('pl-q').value.trim().toLowerCase();
+  return PARCELS.filter(p =>
+    (!status || p.status === status) &&
+    (!q || p.tracking.toLowerCase().includes(q) || p.recipient.toLowerCase().includes(q) || p.unit.toLowerCase().includes(q)),
+  );
+}
+
+function statusBadge(status) {
+  const m = STATUS_META[status];
+  return '<span class="' + m.cls + ' tis-badge-sm tis-badge-round">' + m.label + '</span>';
+}
+
+const esc = s => (s || '').toString().replace(/[<>"&]/g, c => ({ '<': '&lt;', '>': '&gt;', '"': '&quot;', '&': '&amp;' }[c]));
+
+function rowActions(p) {
+  if (p.status === 'delivered' || p.status === 'cancelled' || p.status === 'returned') {
+    return '<button class="sm-choice" type="button" onclick="view(' + p.id + ')">View</button>';
+  }
+  return (p.status === 'ready'
+    ? '<button class="sm-choice" type="button" onclick="deliver(' + p.id + ')">Deliver</button>' +
+      '<button class="sm-choice" type="button" onclick="scanQr(' + p.id + ')">Scan QR</button>'
+    : '') +
+    '<button class="sm-choice" type="button" onclick="view(' + p.id + ')">Edit</button>' +
+    '<button class="sm-choice is-danger" type="button" onclick="cancelParcel(' + p.id + ')">Cancel</button>';
+}
+function mobileActions(p) { return rowActions(p); }
+
+function renderParcels() {
+  const rows = filtered();
+
+  document.getElementById('pl-kpi-ready').textContent     = PARCELS.filter(p => p.status === 'ready').length;
+  document.getElementById('pl-kpi-delivered').textContent = PARCELS.filter(p => p.status === 'delivered' && sameDay(p.deliveredAt, TODAY)).length;
+  document.getElementById('pl-kpi-overdue').textContent   = PARCELS.filter(isOverdue).length;
+  document.getElementById('pl-kpi-cancelled').textContent = PARCELS.filter(p => p.status === 'cancelled' || p.status === 'returned').length;
+
+  const badge = document.getElementById('pl-filter-badge');
+  const active = [document.getElementById('pl-status').value, document.getElementById('pl-q').value.trim()].filter(Boolean).length;
+  badge.style.display = active ? 'inline-flex' : 'none';
+  document.getElementById('pl-filter-count').textContent = active;
+
+  document.getElementById('pl-empty').hidden = !!rows.length;
+
+  document.getElementById('pl-rows').innerHTML = rows.map(p => {
+    const rowCls = ['pl-row', isOverdue(p) ? 'is-overdue' : '', p.status === 'cancelled' ? 'is-cancelled' : ''].filter(Boolean).join(' ');
+    return '<tr class="' + rowCls + '">' +
+      '<td><input type="checkbox" ' + (selected.has(p.id) ? 'checked' : '') + ' onclick="toggleOne(' + p.id + ')" aria-label="Select ' + esc(p.tracking) + '"></td>' +
+      '<td><img class="pl-thumb" src="' + parcelPhoto(p.id) + '" alt=""></td>' +
+      '<td><span class="tis-a" onclick="view(' + p.id + ')">' + esc(p.tracking) + '</span>' +
+        (isOverdue(p) ? '<div><span class="tis-badge-warning tis-badge-xs">Overdue ' + Math.floor((TODAY - p.arrived) / 86400e3) + ' days</span></div>' : '') + '</td>' +
+      '<td>' + esc(CARRIERS_SHORT[p.carrier]) + '</td>' +
+      '<td>' + esc(p.recipient) + '</td>' +
+      '<td>' + esc(p.unit) + ' · ' + esc(p.unitName) + '</td>' +
+      '<td>' + esc(fmt(p.arrived)) + '</td>' +
+      '<td>' + statusBadge(p.status) + '</td>' +
+      '<td class="text-right"><div class="pl-actions">' + rowActions(p) + '</div></td></tr>';
+  }).join('');
+
+  document.getElementById('pl-cards').innerHTML = rows.map(p => {
+    const cls = ['pl-card', isOverdue(p) ? 'is-overdue' : ''].filter(Boolean).join(' ');
+    return '<div class="' + cls + '">' +
+      '<img class="pl-card-thumb" src="' + parcelPhoto(p.id) + '" alt="">' +
+      '<div class="pl-card-body">' +
+        '<div class="pl-card-title">' + esc(p.tracking) + '</div>' +
+        '<div class="pl-card-meta">' + esc(p.recipient) + ' · ' + esc(p.unit) + '</div>' +
+        '<div class="pl-card-meta">' + esc(fmt(p.arrived)) + ' · ' + esc(CARRIERS_SHORT[p.carrier]) + '</div>' +
+        '<div style="margin-top:6px">' + statusBadge(p.status) + '</div>' +
+        '<div class="pl-card-actions">' + mobileActions(p) + '</div>' +
+      '</div></div>';
+  }).join('');
+
+  document.getElementById('pl-range').textContent = rows.length ? '1 – ' + rows.length + ' of ' + rows.length : '0 of 0';
+  document.getElementById('pl-paginator').hidden = !rows.length;
+
+  const validSelection = [...selected].filter(id => rows.some(p => p.id === id));
+  const hint = document.getElementById('pl-selection-hint');
+  hint.hidden = !validSelection.length;
+  document.getElementById('pl-selection-text').textContent = validSelection.length + ' item(s) selected';
+}
+
+const sameDay = (a, b) => a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+function toggleOne(id) {
+  if (selected.has(id)) selected.delete(id); else selected.add(id);
+  renderParcels();
+}
+function toggleAll() {
+  const rows = filtered();
+  const allSelected = rows.every(p => selected.has(p.id));
+  rows.forEach(p => { if (allSelected) selected.delete(p.id); else selected.add(p.id); });
+  renderParcels();
+}
+function clearSelection() { selected.clear(); renderParcels(); }
+
+function applyStatus(id, next, patch) {
+  const p = PARCELS.find(x => x.id === id);
+  if (!p) return false;
+  p.status = next;
+  if (patch) Object.assign(p, patch);
+  selected.delete(id);
+  renderParcels();
+  return true;
+}
+
+function deliver(id) {
+  dialogId = id;
+  const p = PARCELS.find(x => x.id === id);
+  document.getElementById('pl-dialog-text').innerHTML =
+    'Confirm that parcel <b>' + esc(p.tracking) + '</b> was delivered to <b>' + esc(p.recipient) + '</b>. ' +
+    'The time will be recorded as ' + esc(fmt(TODAY)) + ' and the recipient will be notified.';
+  document.body.classList.add('pl-dialog-open');
+}
+function confirmDeliver() {
+  applyStatus(dialogId, 'delivered', { deliveredBy: PARCELS.find(p => p.id === dialogId).recipient, deliveredAt: TODAY });
+  closeDialog();
+}
+function closeDialog() { dialogId = null; document.body.classList.remove('pl-dialog-open'); }
+
+const scanQr = id => alert('Open the camera to scan the recipient QR for #' + id + ' — this demo does not connect that camera yet');
+const view = id => alert('Open parcel details #' + id + ' — this demo has no detail page yet');
+const cancelParcel = id => confirm('Cancel parcel #' + id + '?') && applyStatus(id, 'cancelled');
+function bulkDeliver() {
+  const ids = [...selected];
+  ids.forEach(id => { const p = PARCELS.find(x => x.id === id); if (p && p.status === 'ready') applyStatus(id, 'delivered', { deliveredBy: p.recipient, deliveredAt: TODAY }); });
+  selected.clear();
+  renderParcels();
+}
+const exportCsv = () => alert('Export CSV — this demo does not generate a file yet');
+
+(function selfCheck() {
+  let ok = true;
+  const is = (cond, msg) => { if (!cond) { ok = false; console.assert(cond, msg); } };
+
+  const optionValues = [...document.getElementById('pl-status').options].map(o => o.value).filter(Boolean);
+  is(optionValues.length === Object.keys(STATUS_META).length, 'dropdown statuses must match STATUS_META');
+  optionValues.forEach(v => is(STATUS_META[v], 'status ' + v + ' needs badge meta'));
+
+  const readySample = PARCELS.find(p => p.status === 'ready');
+  const orig = readySample.status;
+  applyStatus(readySample.id, 'delivered', { deliveredBy: readySample.recipient, deliveredAt: TODAY });
+  is(readySample.status === 'delivered', 'Deliver must set status to delivered');
+  applyStatus(readySample.id, orig);
+  applyStatus(readySample.id, 'cancelled');
+  is(readySample.status === 'cancelled', 'Cancel must set status to cancelled');
+  applyStatus(readySample.id, orig);
+
+  document.getElementById('pl-status').value = 'ready';
+  is(filtered().every(p => p.status === 'ready'), 'status filter must actually filter');
+  is(filtered().length < PARCELS.length, 'filter must reduce row count');
+  document.getElementById('pl-status').value = '';
+
+  is(PARCELS.some(isOverdue), 'there should be at least one parcel overdue > 7 days');
+  is(!PARCELS.some(p => p.status === 'delivered' && isOverdue(p)), 'delivered should not count as overdue');
+  is(esc('<script>').includes('&lt;'), 'esc() must escape < > &');
+  console.log(ok ? '✓ self-check passed (status set, transitions, filter, overdue, esc)' : '✗ self-check failed');
+})();
+
+renderParcels();
+</script>
+
+<script type="module" src="parcel-ocr-app.mjs"></script>
+</body>
+</html>

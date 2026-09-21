@@ -174,7 +174,22 @@ export function sourceToJpeg(source, maxEdge = 1920, quality = 0.88) {
   return canvas.toDataURL('image/jpeg', quality);
 }
 
-export function fileToDataUrl(file) {
+export async function fileToDataUrl(file, config = DEFAULT_THRESHOLDS) {
+  if (typeof createImageBitmap === 'function') {
+    let bitmap = null;
+    try {
+      try {
+        bitmap = await createImageBitmap(file, { imageOrientation: 'from-image' });
+      } catch {
+        bitmap = await createImageBitmap(file);
+      }
+      return sourceToJpeg(bitmap, config.maxCaptureEdge, config.captureJpegQuality);
+    } catch {
+      /* FileReader fallback below */
+    } finally {
+      bitmap?.close?.();
+    }
+  }
   return blobToDataUrl(file);
 }
 

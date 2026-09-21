@@ -19,6 +19,15 @@ export function guideCorners(guide = DEFAULT_THRESHOLDS.guide) {
   ];
 }
 
+export function fullFrameCorners() {
+  return [
+    { x: 0, y: 0 },
+    { x: 1, y: 0 },
+    { x: 1, y: 1 },
+    { x: 0, y: 1 },
+  ];
+}
+
 function solveHomography(src, dst) {
   const A = [];
   const b = [];

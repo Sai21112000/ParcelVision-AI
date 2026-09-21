@@ -17,7 +17,39 @@ export async function processStill(originalDataUrl, options = {}) {
     if (detected?.best?.corners) corners = detected.best.corners;
   }
   const usedGuide = !corners;
-  if (!corners) corners = guideCorners(config.guide);
+  if (!corners) {
+    if (options.allowGuide === false) {
+      const quality = options.quality || {
+        sharpness: detected?.sharpness ?? 0.5,
+        brightness: detected?.brightness ?? 0.5,
+        glareRisk: detected?.glareRisk ?? 0.05,
+        stability: 1,
+        stabilityDurationMs: config.stableDurationMs,
+        labelCoverage: detected?.best?.coverage ?? 0,
+        documentBoundaryConfidence: detected?.best?.confidence ?? 0,
+        allCornersInsideSafeMargin: true,
+        forced: false,
+        ambiguous: !!detected?.ambiguous,
+      };
+      return {
+        crop: originalDataUrl,
+        original: originalDataUrl,
+        cornersNormalized: [],
+        usedGuide: true,
+        opencv: isOpenCvReady(),
+        quality,
+        failures: qualityFailures(quality, config),
+        detectedLabel: {
+          confidence: quality.documentBoundaryConfidence,
+          cornersNormalized: [],
+          labelCoverage: quality.labelCoverage,
+          wasManuallyAdjusted: false,
+          ambiguous: !!quality.ambiguous,
+        },
+      };
+    }
+    corners = guideCorners(config.guide);
+  }
   const crop = await warpQuadToRect(originalDataUrl, corners, config);
   const quality = options.quality || {
     sharpness: detected?.sharpness ?? 0.5,

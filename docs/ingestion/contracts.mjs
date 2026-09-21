@@ -13,7 +13,7 @@ export const CaptureSource = Object.freeze({
   MANUAL: 'manual',
 });
 
-export const SCANNER_VERSION = '2.0.0';
+export const SCANNER_VERSION = '2.2.0';
 
 export const emptyDetectedLabel = () => ({
   confidence: 0,

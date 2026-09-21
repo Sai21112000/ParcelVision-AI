@@ -1,4 +1,4 @@
-const GENERIC_TRACKING = /^[A-Z0-9]{8,35}$/;
+export const GENERIC_TRACKING = /^[A-Z0-9]{8,35}$/;
 
 const CARRIER_PATTERNS = [
   { carrier: /Thailand Post|ไปรษณีย์ไทย/i, pattern: /^[A-Z]{2}\d{9}[A-Z]{2}$|^[A-Z0-9]{10,25}$/ },

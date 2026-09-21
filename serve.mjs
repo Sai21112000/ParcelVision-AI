@@ -152,8 +152,14 @@ function toExtraction(model) {
   };
 }
 
-async function geminiExtract(images, enums) {
+async function geminiExtract(images, enums, ocrHint) {
   const parts = images.map(image => ({ inline_data: { mime_type: image.mimeType, data: image.data } }));
+  if (ocrHint) {
+    parts.push({
+      text: 'A local Tesseract.js pass produced this hint. Prefer the photograph when they disagree.\n'
+        + String(ocrHint).slice(0, 2500),
+    });
+  }
   parts.push({ text: PROMPT });
   const upstream = await fetch(`https://generativelanguage.googleapis.com/v1beta/models/${MODEL}:generateContent`, {
     method: 'POST',
@@ -172,7 +178,7 @@ async function geminiExtract(images, enums) {
   const data = JSON.parse(text);
   const cand = data.candidates?.[0];
   const out = (cand?.content?.parts || []).map(p => p.text).filter(Boolean).join('');
-  if (!out) throw new Error('Gemini ไม่คืนข้อมูล (finishReason: ' + (cand?.finishReason || 'unknown') + ')');
+  if (!out) throw new Error('Gemini returned no data (finishReason: ' + (cand?.finishReason || 'unknown') + ')');
   return toExtraction(JSON.parse(out));
 }
 
@@ -186,6 +192,9 @@ function finalizeExtraction(row, extraction) {
   if (compared.normalized && compared.valid) extraction.trackingNumber.normalizedValue = compared.normalized;
   const reasons = [...(extraction.reviewReasons || [])];
   if (row.forced) reasons.push('Image was submitted despite a quality failure');
+  if (row.labelMetrics && row.labelMetrics.ok === false) {
+    reasons.push('Local OCR did not find a tracking number or carrier name');
+  }
   if (compared.conflict) reasons.push('Barcode and OCR tracking numbers conflict');
   if (!extraction.trackingNumber.normalizedValue) reasons.push('Tracking number is missing or invalid');
   if (extraction.labelCount > 1) reasons.push('Multiple labels visible');
@@ -208,7 +217,7 @@ function splitDataUrl(dataUrl) {
 async function extractIngestion(row, enums) {
   row.status = IngestionStatus.PENDING_EXTRACTION;
   const crop = splitDataUrl(row.crop || row.original);
-  if (!crop?.data) throw new Error('ไม่มีรูปในคำขอ');
+  if (!crop?.data) throw new Error('No image in the request');
   let extraction;
   if (!KEY) {
     const shot = MOCK_SHOTS[row.mockIndex % MOCK_SHOTS.length];
@@ -223,7 +232,7 @@ async function extractIngestion(row, enums) {
     if (confidence < 0.85 && original?.data && original.data !== crop.data) {
       images.push({ mimeType: original.mimeType, data: original.data });
     }
-    extraction = await geminiExtract(images, enums);
+    extraction = await geminiExtract(images, enums, row.localOcrText);
   }
   finalizeExtraction(row, extraction);
   return publicIngestion(row);
@@ -249,6 +258,8 @@ createServer(async (req, res) => {
       captureQuality: {},
       detectedLabel: emptyDetectedLabel(),
       forced: false,
+      localOcrText: '',
+      labelMetrics: null,
       original: '',
       crop: '',
       extraction: null,
@@ -275,6 +286,8 @@ createServer(async (req, res) => {
       row.forced = !!body.forced;
       row.detectedLabel = body.detectedLabel || row.detectedLabel || emptyDetectedLabel();
       row.scannerVersion = body.scannerVersion || row.scannerVersion || '2.0.0';
+      row.localOcrText = body.localOcrText || '';
+      row.labelMetrics = body.labelMetrics || null;
       return json(res, { ok: true, ingestionId: row.id });
     }
     if (action === 'extract' && req.method === 'POST') {
@@ -286,11 +299,11 @@ createServer(async (req, res) => {
         return json(res, { error: e.message || String(e) }, 502);
       }
     }
-    return json(res, { error: 'ใช้ method ไม่ถูกต้อง' }, 405);
+    return json(res, { error: 'Method not allowed' }, 405);
   }
 
   if (url === '/api/ocr') {
-    if (req.method !== 'POST') return json(res, { error: 'ใช้ POST' }, 405);
+    if (req.method !== 'POST') return json(res, { error: 'Use POST' }, 405);
     const body = JSON.parse(await readBody(req));
     const id = 'ing_' + (++ingestSeq);
     const row = {
@@ -339,4 +352,4 @@ createServer(async (req, res) => {
     'Cache-Control': 'no-store',
   });
   res.end(body);
-}).listen(8899, () => console.log(`preview server on http://localhost:8899 — OCR ${KEY ? 'พร้อม (' + MODEL + ')' : 'ปิด (ไม่มี GEMINI_API_KEY) → โหมดสาธิต'}`));
+}).listen(8899, () => console.log(`preview server on http://localhost:8899 — OCR ${KEY ? 'ready (' + MODEL + ')' : 'off (no GEMINI_API_KEY) → demo mode'}`));
