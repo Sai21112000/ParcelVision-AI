@@ -10,6 +10,9 @@ function isMac() {
 }
 
 const CONSTRAINT_LADDER = [
+  { facingMode: { exact: 'environment' }, width: { min: 1280, ideal: 1920 }, height: { min: 720, ideal: 1080 } },
+  { facingMode: { ideal: 'environment' }, width: { min: 1280, ideal: 1920 }, height: { min: 720, ideal: 1080 } },
+  { facingMode: { ideal: 'environment' }, width: { ideal: 1280 }, height: { ideal: 720 } },
   { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
   { facingMode: { ideal: 'environment' } },
   true,
@@ -140,13 +143,22 @@ export class CameraSession {
     return this.start(this.facingMode === 'environment' ? 'user' : 'environment');
   }
 
-  async toggleTorch() {
+  hasTorch() {
+    const track = this.stream?.getVideoTracks()[0];
+    return !!track?.getCapabilities?.()?.torch;
+  }
+
+  async setTorch(on) {
     const track = this.stream?.getVideoTracks()[0];
     const capabilities = track?.getCapabilities?.();
     if (!track || !capabilities?.torch) return false;
-    this.torchOn = !this.torchOn;
+    this.torchOn = !!on;
     await track.applyConstraints({ advanced: [{ torch: this.torchOn }] });
     return this.torchOn;
+  }
+
+  async toggleTorch() {
+    return this.setTorch(!this.torchOn);
   }
 
   async takePhoto(config = DEFAULT_THRESHOLDS) {

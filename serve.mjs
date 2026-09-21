@@ -9,6 +9,7 @@ import { fileURLToPath } from 'node:url';
 import { IngestionStatus, emptyDetectedLabel } from './docs/ingestion/contracts.mjs';
 import { compareTracking, normalizeTracking } from './docs/ingestion/tracking-validation.mjs';
 import { MOCK_SHOTS, mockToExtraction } from './docs/ingestion/mock-shots.mjs';
+import { DEFAULT_THRESHOLDS } from './docs/ingestion/thresholds.mjs';
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const DOCS = join(ROOT, 'docs');
@@ -256,7 +257,7 @@ createServer(async (req, res) => {
     return json(res, { ingestionId: id, uploadUrl: '/api/parcel-ingestions/' + id + '/images', status: IngestionStatus.CAPTURED });
   }
 
-  const match = url.match(/^\/api\/parcel-ingestions\/([^/]+)(?:\/(images|metadata|extract))?$/);
+  const match = url.match(/^\/api\/parcel-ingestions\/([^/]+)(?:\/(images|metadata|extract|preprocess))?$/);
   if (match) {
     const row = ingestions.get(match[1]);
     if (!row) return json(res, { error: 'ingestion not found' }, 404);
@@ -267,6 +268,19 @@ createServer(async (req, res) => {
       row.original = body.original || '';
       row.crop = body.crop || body.original || '';
       return json(res, { ok: true, ingestionId: row.id });
+    }
+    if (action === 'preprocess' && req.method === 'POST') {
+      const body = JSON.parse(await readBody(req));
+      const variance = Number(body.laplacianVariance);
+      if (!Number.isFinite(variance) || variance < DEFAULT_THRESHOLDS.minLaplacianVariance) {
+        return json(res, { error: 'Too blurry — hold still', laplacianVariance: variance }, 422);
+      }
+      row.original = body.original || row.original || '';
+      row.crop = body.crop || body.original || row.crop || '';
+      row.laplacianVariance = variance;
+      row.cornersNormalized = body.cornersNormalized || [];
+      row.status = IngestionStatus.PREPROCESSED;
+      return json(res, { ok: true, ingestionId: row.id, status: row.status, laplacianVariance: variance });
     }
     if (action === 'metadata' && req.method === 'POST') {
       const body = JSON.parse(await readBody(req));
