@@ -1,0 +1,665 @@
+<!doctype html>
+<html lang="th" data-theme="admin">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Manage Parcel &middot; ServiceMind</title>
+
+<!-- Font stack: identical to app.servicemind.asia + the OCR mockup so the two
+     pages feel like the same product, not a mock stitched from two sources. -->
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@300;400;500;700&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Prompt:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&display=swap">
+<link rel="stylesheet" href="https://fonts.googleapis.com/icon?family=Material+Icons">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200">
+<link rel="stylesheet" href="https://fonts.servicemind.asia/fnt-awsome-5/font-awesome-5.15.4.min.css">
+
+<link rel="stylesheet" href="servicemind%20(1).css">
+
+<style>
+/* Same fix as the OCR page: hide icon ligature text while the font is still
+   downloading; JS at the bottom reveals it once document.fonts is ready. */
+.material-icons, .material-symbols-outlined { color: transparent; }
+html.fonts-ready .material-icons,
+html.fonts-ready .material-symbols-outlined { color: inherit; }
+
+* { box-sizing: border-box; }
+html, body { height: 100%; }
+body { margin: 0; font: 400 14px/1.5 var(--font-family); color: var(--tis-dark); background: #fff; }
+.sm-shell { display: flex; flex-direction: column; height: 100%; }
+.sm-th { font-family: Prompt, var(--font-family); }
+
+/* KPI strip: 4 stat cards across the top */
+.pl-kpi { display: grid; grid-template-columns: repeat(4, 1fr); gap: 14px; margin: 0 0 14px; }
+.pl-kpi-card { border: 1px solid #eef0f2; border-radius: 8px; padding: 12px 14px; background: #fff; }
+.pl-kpi-value { font: 500 22px/1.2 var(--font-family); color: var(--tis-heading-color); }
+.pl-kpi-label { font-size: 12.5px; color: var(--tis-text-color); margin-top: 2px; }
+.pl-kpi-card--accent { border-color: #fcd34d; background: #fffbeb; }
+.pl-kpi-card--danger { border-color: #fca5a5; background: #fef2f2; }
+
+/* Row-level highlight — overdue rows get a soft amber tint like Approve screen */
+.pl-row.is-overdue { background: #fffbeb; }
+.pl-row.is-cancelled td:not(:first-child):not(:last-child) { color: var(--tis-text-color); text-decoration: line-through; text-decoration-color: #d1d5db; }
+.pl-thumb { width: 52px; height: 40px; object-fit: cover; border-radius: 4px; background: #23272b; }
+
+/* Mobile-first card fallback for the table — mirrors what OCR page does with
+   .sm-approve-cards. One markup, two presentations. */
+.pl-cards { display: none; }
+.pl-card { display: flex; gap: 11px; padding: 10px; border: 1px solid #eef0f2; border-radius: 8px; background: #fff; }
+.pl-card + .pl-card { margin-top: 10px; }
+.pl-card.is-overdue { background: #fffbeb; border-color: #fcd34d; }
+.pl-card-thumb { width: 66px; height: 66px; border-radius: 6px; object-fit: cover; flex: 0 0 auto; background: #23272b; }
+.pl-card-body { min-width: 0; flex: 1 1 auto; }
+.pl-card-title { font-weight: 500; font-size: 13.5px; color: var(--tis-heading-color); }
+.pl-card-meta { font-size: 12px; color: var(--tis-text-color); }
+.pl-card-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pl-choice { border: 1px solid #d8dbe0; background: #fff; border-radius: 999px; cursor: pointer; padding: 4px 11px; font: inherit; font-size: 12.5px; color: var(--tis-dark); }
+.pl-choice:hover { border-color: var(--tis-primary); }
+.pl-choice.is-danger { color: #dc2626; border-color: #fca5a5; }
+
+@media (max-width: 991px) {
+  /* Sidenav takes 285px on Angular Material — hide on real mobile until the
+     real app has a hamburger toggle. Same rule as OCR page. */
+  mat-drawer.drawer { display: none; }
+  .tis-main-container { padding-left: 12px; padding-right: 12px; }
+  .tis-page-header { flex-wrap: wrap; row-gap: 10px; }
+  .tis-page-header > .tis-inline-group { width: 100%; justify-content: flex-end; flex-wrap: wrap; }
+
+  .pl-kpi { grid-template-columns: repeat(2, 1fr); }
+  .pl-desktop { display: none; }
+  .pl-cards { display: block; }
+}
+
+/* Simple dialog wrapper for the Deliver confirm — reuses the same pattern as
+   the OCR page's Approve dialog so both pages feel the same. */
+.pl-dialog-wrap { position: fixed; inset: 0; z-index: 50; display: none; align-items: center; justify-content: center; background: rgba(0,0,0,.32); padding: 16px; }
+body.pl-dialog-open .pl-dialog-wrap { display: flex; }
+button[disabled] { opacity: .45; pointer-events: none; }
+</style>
+</head>
+
+<body class="sm-th">
+<div class="sm-shell">
+
+  <!-- ===== toolbar ====================================================== -->
+  <mat-toolbar class="mat-toolbar header mat-toolbar-single-row">
+    <button class="mdc-icon-button mat-mdc-icon-button mat-mdc-button-base icon-btn">
+      <span class="material-symbols-outlined">window</span>
+    </button>
+    <b style="font-size:22px;margin-left:6px">Service<i style="font-style:normal;color:#9e9e9e">Mind</i></b>
+    <span class="spacer"></span>
+    <button class="mdc-icon-button mat-mdc-icon-button mat-mdc-button-base icon-btn">
+      <mat-icon class="mat-icon material-icons">phone_iphone</mat-icon>
+    </button>
+    <button class="mdc-icon-button mat-mdc-icon-button mat-mdc-button-base icon-btn">
+      <mat-icon class="mat-icon material-icons">notifications</mat-icon>
+    </button>
+    <button class="mdc-button mat-mdc-button-base profile-btn mat-mdc-button">
+      <span class="mdc-button__label">
+        <mat-icon class="mat-icon material-icons">account_circle</mat-icon>
+        <span class="profile-info">ais_admin</span>
+      </span>
+    </button>
+  </mat-toolbar>
+
+  <mat-drawer-container style="flex:1 1 auto;min-height:0">
+
+    <!-- ===== sidenav =================================================== -->
+    <mat-drawer class="mat-drawer drawer">
+      <mat-list class="mat-mdc-list h-full overflow-auto">
+        <mat-list-item class="mat-mdc-list-item custom-mat-list-item">
+          <span class="mdc-list-item__content">
+            <a href="#"><p><mat-icon class="mat-icon material-icons">home</mat-icon><span>Home</span></p></a>
+          </span>
+        </mat-list-item>
+
+        <div class="p-2"><mat-divider class="mat-divider mat-divider-horizontal"></mat-divider></div>
+
+        <mat-expansion-panel class="mat-expansion-panel custom-expansion-panel mat-expanded">
+          <mat-expansion-panel-header class="mat-expansion-panel-header">
+            <span class="mat-content">
+              <mat-panel-title class="mat-expansion-panel-header-title">
+                <mat-icon class="mat-icon material-icons">inventory_2</mat-icon><span>Parcel Management</span>
+              </mat-panel-title>
+            </span>
+            <span class="mat-expansion-indicator"></span>
+          </mat-expansion-panel-header>
+          <div class="mat-expansion-panel-content-wrapper">
+            <div class="mat-expansion-panel-content">
+              <div class="mat-expansion-panel-body">
+                <mat-list-item class="mat-mdc-list-item custom-mat-list-item">
+                  <span class="mdc-list-item__content"><a href="servicemind-parcel-list.html" class="active"><p><span>Manage Parcel</span></p></a></span>
+                </mat-list-item>
+                <mat-list-item class="mat-mdc-list-item custom-mat-list-item">
+                  <span class="mdc-list-item__content"><a href="#"><p><span>Parcel Setting</span></p></a></span>
+                </mat-list-item>
+              </div>
+            </div>
+          </div>
+        </mat-expansion-panel>
+
+        <mat-expansion-panel class="mat-expansion-panel custom-expansion-panel">
+          <mat-expansion-panel-header class="mat-expansion-panel-header">
+            <span class="mat-content">
+              <mat-panel-title class="mat-expansion-panel-header-title">
+                <mat-icon class="mat-icon material-icons">apartment</mat-icon><span>Property Setup</span>
+              </mat-panel-title>
+            </span>
+            <span class="mat-expansion-indicator"></span>
+          </mat-expansion-panel-header>
+          <div class="mat-expansion-panel-content-wrapper">
+            <div class="mat-expansion-panel-content">
+              <div class="mat-expansion-panel-body">
+                <mat-list-item class="mat-mdc-list-item custom-mat-list-item">
+                  <span class="mdc-list-item__content"><a href="#"><p><span>Building</span></p></a></span>
+                </mat-list-item>
+                <mat-list-item class="mat-mdc-list-item custom-mat-list-item">
+                  <span class="mdc-list-item__content"><a href="#"><p><span>Property Unit</span></p></a></span>
+                </mat-list-item>
+              </div>
+            </div>
+          </div>
+        </mat-expansion-panel>
+
+        <div class="p-2"><mat-divider class="mat-divider mat-divider-horizontal"></mat-divider></div>
+
+        <mat-list-item class="mat-mdc-list-item custom-mat-list-item">
+          <span class="mdc-list-item__content">
+            <a href="#"><p><mat-icon class="mat-icon material-icons">insert_chart_outlined</mat-icon><span>Organisation Statistics</span></p></a>
+          </span>
+        </mat-list-item>
+      </mat-list>
+    </mat-drawer>
+
+    <!-- ===== page ====================================================== -->
+    <mat-drawer-content>
+      <div class="tis-main-container">
+        <div class="tis-page">
+
+          <ul class="tis-breadcrumb">
+            <li class="tis-breadcrumb-item"><a href="#">Home</a></li>
+            <li class="tis-breadcrumb-item"><a href="#">Parcel Management</a></li>
+            <li class="tis-breadcrumb-item active">Manage Parcel</li>
+          </ul>
+
+          <div class="tis-page-header">
+            <div class="tis-page-title">จัดการพัสดุ</div>
+            <ul class="tis-inline-group">
+              <li class="tis-inline-group-item">
+                <button class="mdc-button mat-mdc-button-base tis-text-upper tis-btn-primary" onclick="exportCsv()">
+                  <span class="mdc-button__label"><mat-icon class="mat-icon material-icons">download</mat-icon>Export</span>
+                </button>
+              </li>
+              <li class="tis-inline-group-item">
+                <a class="mdc-button mat-mdc-button-base tis-text-upper tis-btn-filled-primary" href="servicemind-parcel-ocr.html">
+                  <span class="mdc-button__label"><mat-icon class="mat-icon material-icons">add</mat-icon>Add New Parcel</span>
+                </a>
+              </li>
+            </ul>
+          </div>
+
+          <div class="tis-page-body">
+
+            <!-- KPI strip: 4 numbers that answer "งานวันนี้เป็นยังไง" at a glance -->
+            <div class="pl-kpi" id="pl-kpi">
+              <div class="pl-kpi-card"><div class="pl-kpi-value" id="kpi-ready">0</div><div class="pl-kpi-label">รอส่งมอบ</div></div>
+              <div class="pl-kpi-card"><div class="pl-kpi-value" id="kpi-delivered">0</div><div class="pl-kpi-label">ส่งมอบวันนี้</div></div>
+              <div class="pl-kpi-card pl-kpi-card--accent"><div class="pl-kpi-value" id="kpi-overdue">0</div><div class="pl-kpi-label">ค้างเกิน 7 วัน</div></div>
+              <div class="pl-kpi-card pl-kpi-card--danger"><div class="pl-kpi-value" id="kpi-cancelled">0</div><div class="pl-kpi-label">ยกเลิก / ตีกลับ</div></div>
+            </div>
+
+            <!-- Filter row (inline, wraps on narrow) -->
+            <div class="flex flex-wrap gap-3" style="margin-bottom:14px">
+              <mat-form-field class="mat-mdc-form-field tis-mat-form-field flex-1" style="min-width:220px">
+                <div class="mat-mdc-text-field-wrapper">
+                  <div class="mat-mdc-form-field-flex">
+                    <div class="mdc-notched-outline">
+                      <div class="mdc-notched-outline__leading"></div>
+                      <div class="mdc-notched-outline__notch"><label class="mdc-floating-label mat-mdc-floating-label mdc-floating-label--float-above">Project</label></div>
+                      <div class="mdc-notched-outline__trailing"></div>
+                    </div>
+                    <div class="mat-mdc-form-field-infix">
+                      <div class="mat-mdc-select">
+                        <div class="mat-mdc-select-value">AIS Tower 1 (Phahonyothin)</div>
+                        <div class="mat-mdc-select-arrow-wrapper"><div class="mat-mdc-select-arrow"></div></div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </mat-form-field>
+
+              <mat-form-field class="mat-mdc-form-field tis-mat-form-field" style="min-width:180px">
+                <div class="mat-mdc-text-field-wrapper">
+                  <div class="mat-mdc-form-field-flex">
+                    <div class="mdc-notched-outline">
+                      <div class="mdc-notched-outline__leading"></div>
+                      <div class="mdc-notched-outline__notch"><label class="mdc-floating-label mat-mdc-floating-label mdc-floating-label--float-above">สถานะ</label></div>
+                      <div class="mdc-notched-outline__trailing"></div>
+                    </div>
+                    <div class="mat-mdc-form-field-infix">
+                      <select id="pl-status" onchange="render()" style="border:0;background:transparent;font:inherit;color:inherit;outline:none;width:100%">
+                        <option value="">ทั้งหมด</option>
+                        <option value="ready">Ready for Pick-up</option>
+                        <option value="delivered">Delivered</option>
+                        <option value="onhold">Awaiting Approval</option>
+                        <option value="cancelled">Cancelled</option>
+                        <option value="returned">Returned</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </mat-form-field>
+
+              <mat-form-field class="mat-mdc-form-field tis-mat-form-field tis-mat-form-field-suffix flex-1" style="min-width:240px">
+                <div class="mat-mdc-text-field-wrapper">
+                  <div class="mat-mdc-form-field-flex">
+                    <div class="mdc-notched-outline">
+                      <div class="mdc-notched-outline__leading"></div>
+                      <div class="mdc-notched-outline__notch"><label class="mdc-floating-label mat-mdc-floating-label mdc-floating-label--float-above">ค้นหา (Tracking / ผู้รับ)</label></div>
+                      <div class="mdc-notched-outline__trailing"></div>
+                    </div>
+                    <div class="mat-mdc-form-field-infix">
+                      <input id="pl-q" oninput="render()" class="mat-mdc-input-element" placeholder="เช่น LEXPU… หรือ K.Ratchadawan">
+                    </div>
+                    <div class="mat-mdc-form-field-icon-suffix"><mat-icon class="mat-icon material-icons">search</mat-icon></div>
+                  </div>
+                </div>
+              </mat-form-field>
+            </div>
+
+            <!-- Table toolbar + active filter badge -->
+            <div class="tis-page-body-header" style="margin-bottom:8px">
+              <ul class="tis-btn-group" style="gap:8px;list-style:none;padding:0;margin:0;display:flex">
+                <li>
+                  <button class="mdc-button mdc-button--unelevated mat-mdc-unelevated-button mat-unthemed tis-text-upper">
+                    <span class="mdc-button__label"><mat-icon class="mat-icon material-icons">view_week</mat-icon>Default<mat-icon class="mat-icon material-icons">arrow_drop_down</mat-icon></span>
+                  </button>
+                </li>
+                <li>
+                  <button class="mdc-button mdc-button--unelevated mat-mdc-unelevated-button mat-unthemed tis-text-upper">
+                    <span class="mdc-button__label"><mat-icon class="mat-icon material-icons">filter_alt</mat-icon>Filter</span>
+                  </button>
+                </li>
+              </ul>
+              <span class="tis-filter-badge tis-badge-sm" id="pl-filter-badge" style="display:none">
+                <mat-icon class="mat-icon material-icons">filter_alt</mat-icon><span id="pl-filter-count">0</span> filters applied
+              </span>
+            </div>
+
+            <!-- Selection hint (below the table); non-sticky, matches billing pattern -->
+            <div id="pl-selection-hint" style="display:none">
+              <div class="tis-alert tis-alert-info">
+                <mat-icon class="mat-icon material-icons">info</mat-icon>
+                <span id="pl-selection-text">1 รายการถูกเลือก</span> — ใช้ปุ่มด้านล่างเพื่อดำเนินการเป็นชุด
+                <span style="margin-left:auto">
+                  <button class="pl-choice" onclick="bulkDeliver()">ส่งมอบทั้งหมด</button>
+                  <button class="pl-choice is-danger" onclick="clearSelection()">ล้าง</button>
+                </span>
+              </div>
+            </div>
+
+            <!-- Desktop: table -->
+            <div class="tis-table-container pl-desktop">
+              <div class="tis-table-container-body">
+                <div class="tis-table-wrapper">
+                  <table class="tis-table" style="width:100%;border-collapse:collapse">
+                    <thead>
+                      <tr>
+                        <th style="width:44px">
+                          <mat-checkbox class="mat-mdc-checkbox tis-mat-checkbox-primary" id="pl-check-all" onclick="toggleAll()"><span></span></mat-checkbox>
+                        </th>
+                        <th style="width:60px">รูป</th>
+                        <th>Tracking #</th>
+                        <th>ขนส่ง</th>
+                        <th>ผู้รับ</th>
+                        <th>ชั้น / แผนก</th>
+                        <th>มาถึง</th>
+                        <th>สถานะ</th>
+                        <th class="text-right" style="width:180px">การดำเนินการ</th>
+                      </tr>
+                    </thead>
+                    <tbody id="pl-rows"></tbody>
+                  </table>
+                </div>
+
+                <div class="tis-data-not-found" id="pl-empty" style="display:none">
+                  <mat-icon class="mat-icon material-icons tis-mat-icon-3x tis-text-light">inbox</mat-icon>
+                  <h5>ไม่พบพัสดุที่ตรงเงื่อนไข</h5>
+                  <p>ลองล้างตัวกรอง หรือรับพัสดุใหม่เพื่อเริ่มต้น</p>
+                  <a class="mdc-button mat-mdc-button-base tis-text-upper tis-btn-filled-primary" href="servicemind-parcel-ocr.html">
+                    <span class="mdc-button__label"><mat-icon class="mat-icon material-icons">add</mat-icon>Add New Parcel</span>
+                  </a>
+                </div>
+
+                <div class="tis-table-paginator" id="pl-paginator">
+                  <mat-paginator class="mat-mdc-paginator">
+                    <div class="mat-mdc-paginator-outer-container">
+                      <div class="mat-mdc-paginator-container">
+                        <div class="mat-mdc-paginator-page-size">
+                          <div class="mat-mdc-paginator-page-size-label">Items per page:</div>
+                          <div class="mat-mdc-paginator-page-size-value">10</div>
+                        </div>
+                        <div class="mat-mdc-paginator-range-actions">
+                          <div class="mat-mdc-paginator-range-label" id="pl-range">1 – 10 of 0</div>
+                        </div>
+                      </div>
+                    </div>
+                  </mat-paginator>
+                </div>
+              </div>
+            </div>
+
+            <!-- Mobile: cards (same data, different layout) -->
+            <div class="pl-cards" id="pl-cards"></div>
+
+          </div>
+        </div>
+      </div>
+
+      <!-- ===== Deliver confirm dialog ================================== -->
+      <div class="pl-dialog-wrap" onclick="if (event.target === this) closeDialog()">
+        <mat-dialog-container class="mat-mdc-dialog-container">
+          <div class="tis-simple-confirmation" style="width:100%;max-width:460px">
+            <div class="tis-simple-confirmation-icon"><mat-icon class="mat-icon material-icons">local_shipping</mat-icon></div>
+            <h3 class="tis-simple-confirmation-title">ยืนยันการส่งมอบพัสดุ</h3>
+            <div class="tis-simple-confirmation-desc" id="pl-dialog-text"></div>
+            <div class="tis-simple-confirmation-actions">
+              <button class="mdc-button mat-mdc-button-base tis-text-upper tis-btn-primary" onclick="closeDialog()">
+                <span class="mdc-button__label">ยกเลิก</span>
+              </button>
+              <button class="mdc-button mat-mdc-button-base tis-text-upper tis-btn-filled-primary" onclick="confirmDeliver()">
+                <span class="mdc-button__label">ยืนยันส่งมอบ</span>
+              </button>
+            </div>
+          </div>
+        </mat-dialog-container>
+      </div>
+
+    </mat-drawer-content>
+  </mat-drawer-container>
+</div>
+
+<script>
+/* ==========================================================================
+   Manage Parcel — list mock-up.
+   Same shape as OCR page: mock state on the client, no backend. This lets us
+   demo the round trip "รายการ → รับพัสดุใหม่ (OCR) → กลับมารายการ" for AIS
+   without any API. Real Angular app would replace `PARCELS` with a service
+   call and keep the same render() / applyStatus() shape.
+
+   ponytail: two sources of truth for the status set — the <select> options
+   and STATUS_META below — kept aligned by the self-check at the bottom.
+   ========================================================================== */
+
+const STATUS_META = {
+  ready:     { label: 'Ready for Pick-up',  cls: 'tis-badge-sr-so-approved',  icon: 'inventory_2' },
+  delivered: { label: 'Delivered',          cls: 'tis-badge-sr-so-completed', icon: 'check_circle' },
+  onhold:    { label: 'Awaiting Approval',  cls: 'tis-badge-sr-so-onhold',    icon: 'schedule' },
+  cancelled: { label: 'Cancelled',          cls: 'tis-badge-sr-so-cancelled', icon: 'cancel' },
+  returned:  { label: 'Returned',           cls: 'tis-badge-sr-so-closed',    icon: 'undo' },
+};
+const CARRIERS_SHORT = {
+  LEL:      'LEL Express',
+  Flash:    'Flash Express',
+  Kerry:    'Kerry Express',
+  Thai:     'Thailand Post',
+  JT:       'J&T Express',
+  SCG:      'SCG Express',
+  DHL:      'DHL Express',
+  Shopee:   'Shopee',
+};
+
+/* Mock parcels — arrived-time drives "overdue" (> 7 days ago while ready). */
+const TODAY = new Date('2026-09-18T09:00:00+07:00');
+const daysAgo = n => new Date(TODAY.getTime() - n * 86400e3);
+const fmt = d => d.toLocaleString('th-TH', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }).replace(/,/, '');
+
+const PARCELS = [
+  { id: 15628, tracking: 'LEXPU0703623961', carrier: 'LEL',    recipient: 'K.Tomoya Sakai',     unit: '21F-MKT', unitName: 'Marketing',        arrived: daysAgo(0),  status: 'ready',     type: 'ห่อเล็ก' },
+  { id: 15627, tracking: 'TH260330625225F', carrier: 'Thai',   recipient: 'K.Pitcha W.',        unit: '18F-FIN', unitName: 'Finance',          arrived: daysAgo(0),  status: 'ready',     type: 'Envelope' },
+  { id: 15626, tracking: 'FL2609181004TH',  carrier: 'Flash',  recipient: 'K.Priwach T.',       unit: '24F-ENG', unitName: 'Engineering',      arrived: daysAgo(0),  status: 'ready',     type: 'ห่อใหญ่' },
+  { id: 15625, tracking: 'LEXPU0703471485', carrier: 'LEL',    recipient: 'K.Ratchadawan P.',   unit: '21F-MKT', unitName: 'Marketing',        arrived: daysAgo(1),  status: 'delivered', type: 'ห่อกลาง', deliveredBy: 'K.Ratchadawan P.', deliveredAt: daysAgo(1) },
+  { id: 15624, tracking: 'JT2609170822TH',  carrier: 'JT',     recipient: 'K.Jirayu M.',        unit: '9F-CS',   unitName: 'Customer Service', arrived: daysAgo(1),  status: 'delivered', type: 'ห่อเล็ก', deliveredBy: 'K.Jirayu M.',      deliveredAt: daysAgo(1) },
+  { id: 15623, tracking: 'SCG2609187741',   carrier: 'SCG',    recipient: '— ไม่ทราบผู้รับ —',   unit: '12F-HRD', unitName: 'HR',               arrived: daysAgo(2),  status: 'onhold',    type: 'Bag' },
+  { id: 15622, tracking: 'KE260916TH123',   carrier: 'Kerry',  recipient: 'K.Monthartip K.',    unit: '12F-HRD', unitName: 'HR',               arrived: daysAgo(3),  status: 'delivered', type: 'ห่อเล็ก', deliveredBy: 'K.Monthartip K.',  deliveredAt: daysAgo(3) },
+  { id: 15621, tracking: 'DHL9182735510',   carrier: 'DHL',    recipient: 'K.Theerapat K.',     unit: '24F-ENG', unitName: 'Engineering',      arrived: daysAgo(8),  status: 'ready',     type: 'ห่อกลาง' },
+  { id: 15620, tracking: 'SP260910114892',  carrier: 'Shopee', recipient: 'K.Nattapong S.',     unit: '21F-MKT', unitName: 'Marketing',        arrived: daysAgo(9),  status: 'ready',     type: 'ห่อเล็ก' },
+  { id: 15619, tracking: 'FL2609091728TH',  carrier: 'Flash',  recipient: 'K.Ornuma L.',        unit: '18F-FIN', unitName: 'Finance',          arrived: daysAgo(10), status: 'returned',  type: 'ห่อกลาง' },
+  { id: 15618, tracking: 'TH260908F5511',   carrier: 'Thai',   recipient: 'K.Aphirak N.',       unit: '24F-ENG', unitName: 'Engineering',      arrived: daysAgo(11), status: 'cancelled', type: 'Envelope' },
+  { id: 15617, tracking: 'LEL260907TH991',  carrier: 'LEL',    recipient: 'K.Benjaporn R.',     unit: '9F-CS',   unitName: 'Customer Service', arrived: daysAgo(12), status: 'delivered', type: 'ห่อกลาง', deliveredBy: 'K.Benjaporn R.',   deliveredAt: daysAgo(11) },
+];
+
+let selected = new Set();
+let dialogId = null;
+
+/* Fake parcel photo: same SVG generator used by the OCR page so both mocks
+   render matching thumbnails. ponytail: 24-line SVG stays under `data:` URL
+   size limits and needs no binary asset. */
+function parcelPhoto(seed) {
+  const hue = [28, 34, 20, 40, 15, 45][seed % 6];
+  const svg =
+    '<svg xmlns="http://www.w3.org/2000/svg" width="240" height="180">' +
+    '<rect width="240" height="180" fill="#2b2f33"/>' +
+    '<rect x="26" y="34" width="188" height="120" rx="6" fill="hsl(' + hue + ',45%,58%)"/>' +
+    '<rect x="26" y="78" width="188" height="10" fill="hsl(' + hue + ',40%,48%)" opacity=".7"/>' +
+    '<rect x="58" y="52" width="124" height="74" rx="3" fill="#fdfdfd"/>' +
+    '<rect x="66" y="60" width="70" height="6" fill="#9aa0a6"/>' +
+    '<rect x="66" y="72" width="46" height="5" fill="#c3c7cb"/>' +
+    Array.from({ length: 22 }, (_, i) => '<rect x="' + (67 + i * 5) + '" y="88" width="' + (i % 3 ? 2 : 3) + '" height="22" fill="#1c1f23"/>').join('') +
+    '<rect x="66" y="114" width="86" height="5" fill="#9aa0a6"/>' +
+    '</svg>';
+  return 'data:image/svg+xml;utf8,' + encodeURIComponent(svg);
+}
+
+/* Row is "overdue" when it's been sitting waiting more than 7 days. Only
+   applies to `ready` — a delivered/cancelled row is done, no urgency. */
+const isOverdue = p => p.status === 'ready' && (TODAY - p.arrived) > 7 * 86400e3;
+
+function filtered() {
+  const status = document.getElementById('pl-status').value;
+  const q = document.getElementById('pl-q').value.trim().toLowerCase();
+  return PARCELS.filter(p =>
+    (!status || p.status === status) &&
+    (!q || p.tracking.toLowerCase().includes(q) || p.recipient.toLowerCase().includes(q) || p.unit.toLowerCase().includes(q)),
+  );
+}
+
+function statusBadge(status) {
+  const m = STATUS_META[status];
+  return '<span class="' + m.cls + ' tis-badge-sm tis-badge-round">' +
+    '<mat-icon class="mat-icon material-icons">' + m.icon + '</mat-icon>' + m.label + '</span>';
+}
+
+/* Escape user/mock text before yielding to innerHTML. Everything else in the
+   file uses innerHTML too — one central esc keeps future strings safe. */
+const esc = s => (s || '').toString().replace(/[<>"&]/g, c => ({ '<': '&lt;', '>': '&gt;', '"': '&quot;', '&': '&amp;' }[c]));
+
+/* Icon-button row actions. Delivered/cancelled rows lose the "act" actions —
+   there's nothing to do once the parcel has moved on. */
+function rowActions(p) {
+  const btn = (icon, cls, title, fn) =>
+    '<button class="mdc-icon-button mat-mdc-icon-button mat-mdc-button-base tis-icon-btn-sm" title="' + esc(title) + '" onclick="' + fn + '">' +
+      '<mat-icon class="mat-icon material-icons ' + cls + ' tis-mat-icon-sm">' + icon + '</mat-icon></button>';
+  if (p.status === 'delivered' || p.status === 'cancelled' || p.status === 'returned') {
+    return btn('visibility', 'tis-text-primary', 'ดูรายละเอียด', 'view(' + p.id + ')');
+  }
+  return (p.status === 'ready' ? btn('local_shipping', 'tis-text-primary', 'ส่งมอบพัสดุ',     'deliver(' + p.id + ')')     : '') +
+         (p.status === 'ready' ? btn('qr_code_scanner', 'tis-text-primary', 'สแกน QR ผู้รับ', 'scanQr(' + p.id + ')')     : '') +
+         btn('edit',            'tis-text-primary', 'แก้ไข',        'view(' + p.id + ')') +
+         btn('close',           'tis-text-danger',  'ยกเลิก',       'cancelParcel(' + p.id + ')');
+}
+function mobileActions(p) {
+  if (p.status === 'delivered' || p.status === 'cancelled' || p.status === 'returned') {
+    return '<button class="pl-choice" onclick="view(' + p.id + ')">ดูรายละเอียด</button>';
+  }
+  return (p.status === 'ready'
+    ? '<button class="pl-choice" onclick="deliver(' + p.id + ')">ส่งมอบ</button>' +
+      '<button class="pl-choice" onclick="scanQr(' + p.id + ')">สแกน QR</button>'
+    : '') +
+    '<button class="pl-choice" onclick="view(' + p.id + ')">แก้ไข</button>' +
+    '<button class="pl-choice is-danger" onclick="cancelParcel(' + p.id + ')">ยกเลิก</button>';
+}
+
+/* Render top-to-bottom: KPIs, filter badge, desktop table, mobile cards,
+   pagination range, selection hint. Cheap to re-run — no DOM diffing needed
+   for a mock at this size. */
+function render() {
+  const rows = filtered();
+
+  /* KPI numbers — always over the FULL set (not the filtered view) so users
+     don't lose track of the pending workload when they filter. */
+  document.getElementById('kpi-ready').textContent     = PARCELS.filter(p => p.status === 'ready').length;
+  document.getElementById('kpi-delivered').textContent = PARCELS.filter(p => p.status === 'delivered' && sameDay(p.deliveredAt, TODAY)).length;
+  document.getElementById('kpi-overdue').textContent   = PARCELS.filter(isOverdue).length;
+  document.getElementById('kpi-cancelled').textContent = PARCELS.filter(p => p.status === 'cancelled' || p.status === 'returned').length;
+
+  const badge = document.getElementById('pl-filter-badge');
+  const active = [document.getElementById('pl-status').value, document.getElementById('pl-q').value.trim()].filter(Boolean).length;
+  badge.style.display = active ? 'inline-flex' : 'none';
+  document.getElementById('pl-filter-count').textContent = active;
+
+  document.getElementById('pl-empty').style.display = rows.length ? 'none' : 'flex';
+
+  document.getElementById('pl-rows').innerHTML = rows.map(p => {
+    const rowCls = ['pl-row', isOverdue(p) ? 'is-overdue' : '', p.status === 'cancelled' ? 'is-cancelled' : ''].filter(Boolean).join(' ');
+    return '<tr class="' + rowCls + '">' +
+      '<td><mat-checkbox class="mat-mdc-checkbox tis-mat-checkbox-primary ' + (selected.has(p.id) ? 'mat-mdc-checkbox-checked' : '') +
+        '" onclick="toggleOne(' + p.id + ')"><span></span></mat-checkbox></td>' +
+      '<td><img class="pl-thumb" src="' + parcelPhoto(p.id) + '" alt=""></td>' +
+      '<td><span class="tis-a" onclick="view(' + p.id + ')">' + esc(p.tracking) + '</span>' +
+        (isOverdue(p) ? '<div><span class="tis-badge-warning tis-badge-xs">ค้าง ' + Math.floor((TODAY - p.arrived) / 86400e3) + ' วัน</span></div>' : '') + '</td>' +
+      '<td>' + esc(CARRIERS_SHORT[p.carrier]) + '</td>' +
+      '<td>' + esc(p.recipient) + '</td>' +
+      '<td>' + esc(p.unit) + ' · ' + esc(p.unitName) + '</td>' +
+      '<td>' + esc(fmt(p.arrived)) + '</td>' +
+      '<td>' + statusBadge(p.status) + '</td>' +
+      '<td class="text-right">' + rowActions(p) + '</td></tr>';
+  }).join('');
+
+  document.getElementById('pl-cards').innerHTML = rows.map(p => {
+    const cls = ['pl-card', isOverdue(p) ? 'is-overdue' : ''].filter(Boolean).join(' ');
+    return '<div class="' + cls + '">' +
+      '<img class="pl-card-thumb" src="' + parcelPhoto(p.id) + '" alt="">' +
+      '<div class="pl-card-body">' +
+        '<div class="pl-card-title">' + esc(p.tracking) + '</div>' +
+        '<div class="pl-card-meta">' + esc(p.recipient) + ' · ' + esc(p.unit) + '</div>' +
+        '<div class="pl-card-meta">' + esc(fmt(p.arrived)) + ' · ' + esc(CARRIERS_SHORT[p.carrier]) + '</div>' +
+        '<div style="margin-top:6px">' + statusBadge(p.status) + '</div>' +
+        '<div class="pl-card-actions">' + mobileActions(p) + '</div>' +
+      '</div></div>';
+  }).join('');
+
+  document.getElementById('pl-range').textContent = rows.length ? '1 – ' + rows.length + ' of ' + rows.length : '0 of 0';
+  document.getElementById('pl-paginator').style.display = rows.length ? '' : 'none';
+
+  /* Selection hint updates every render so cancelling a selected row keeps
+     the counter in sync (or hides the bar). */
+  const validSelection = [...selected].filter(id => rows.some(p => p.id === id));
+  const hint = document.getElementById('pl-selection-hint');
+  hint.style.display = validSelection.length ? '' : 'none';
+  document.getElementById('pl-selection-text').textContent = validSelection.length + ' รายการถูกเลือก';
+}
+
+const sameDay = (a, b) => a && b && a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
+
+function toggleOne(id) {
+  if (selected.has(id)) selected.delete(id); else selected.add(id);
+  render();
+}
+function toggleAll() {
+  const rows = filtered();
+  const allSelected = rows.every(p => selected.has(p.id));
+  rows.forEach(p => { if (allSelected) selected.delete(p.id); else selected.add(p.id); });
+  render();
+}
+function clearSelection() { selected.clear(); render(); }
+
+/* Status transitions — the whole point of the list page. Each is one guarded
+   assignment; the OCR page and the Angular app would call the same shape. */
+function applyStatus(id, next, patch) {
+  const p = PARCELS.find(x => x.id === id);
+  if (!p) return false;
+  p.status = next;
+  if (patch) Object.assign(p, patch);
+  selected.delete(id);
+  render();
+  return true;
+}
+
+function deliver(id) {
+  dialogId = id;
+  const p = PARCELS.find(x => x.id === id);
+  document.getElementById('pl-dialog-text').innerHTML =
+    'ยืนยันว่าพัสดุ <b>' + esc(p.tracking) + '</b> ถูกส่งมอบให้ <b>' + esc(p.recipient) + '</b> แล้ว ' +
+    'ระบบจะบันทึกเวลา ' + esc(fmt(TODAY)) + ' และแจ้งเตือนผู้รับ';
+  document.body.classList.add('pl-dialog-open');
+}
+function confirmDeliver() {
+  applyStatus(dialogId, 'delivered', { deliveredBy: PARCELS.find(p => p.id === dialogId).recipient, deliveredAt: TODAY });
+  closeDialog();
+}
+function closeDialog() { dialogId = null; document.body.classList.remove('pl-dialog-open'); }
+
+const scanQr = id => alert('เปิดกล้องสแกน QR ผู้รับสำหรับ #' + id + ' — เดโมยังไม่ต่อกล้องส่วนนี้');
+const view = id => alert('เปิดหน้ารายละเอียดพัสดุ #' + id + ' — เดโมยังไม่มีหน้า detail');
+const cancelParcel = id => confirm('ยืนยันยกเลิกพัสดุ #' + id + ' ?') && applyStatus(id, 'cancelled');
+function bulkDeliver() {
+  const ids = [...selected];
+  ids.forEach(id => { const p = PARCELS.find(x => x.id === id); if (p && p.status === 'ready') applyStatus(id, 'delivered', { deliveredBy: p.recipient, deliveredAt: TODAY }); });
+  selected.clear();
+  render();
+}
+const exportCsv = () => alert('Export CSV — เดโมยังไม่ต่อไฟล์ส่วนนี้');
+
+/* ==========================================================================
+   Self-check — the same pattern as the OCR page. Two things that would rot
+   silently: (1) the status set shared with the <select>, (2) the state
+   transition (ready → delivered / cancelled). Failures log to the console
+   and never ship without being noticed. */
+(function selfCheck() {
+  let ok = true;
+  const is = (cond, msg) => { if (!cond) { ok = false; console.assert(cond, msg); } };
+
+  /* The 5 statuses in the <select> must match STATUS_META. */
+  const optionValues = [...document.getElementById('pl-status').options].map(o => o.value).filter(Boolean);
+  is(optionValues.length === Object.keys(STATUS_META).length, 'ตัวเลือกสถานะใน dropdown ต้องครบทุกสถานะที่มี badge');
+  optionValues.forEach(v => is(STATUS_META[v], 'สถานะ ' + v + ' ต้องมี badge meta'));
+
+  /* State transitions: pick a real ready row (not the mutable global list). */
+  const readySample = PARCELS.find(p => p.status === 'ready');
+  const orig = readySample.status;
+  applyStatus(readySample.id, 'delivered', { deliveredBy: readySample.recipient, deliveredAt: TODAY });
+  is(readySample.status === 'delivered', 'Deliver ต้องเปลี่ยนสถานะเป็น delivered');
+  applyStatus(readySample.id, orig); // restore
+  applyStatus(readySample.id, 'cancelled');
+  is(readySample.status === 'cancelled', 'Cancel ต้องเปลี่ยนสถานะเป็น cancelled');
+  applyStatus(readySample.id, orig); // restore
+
+  /* Filter narrows: ready < all. */
+  document.getElementById('pl-status').value = 'ready';
+  is(filtered().every(p => p.status === 'ready'), 'ตัวกรองสถานะต้องกรองจริง');
+  is(filtered().length < PARCELS.length,          'ตัวกรองต้องลดจำนวนแถวลง');
+  document.getElementById('pl-status').value = '';
+
+  /* Overdue triggers only on ready. */
+  is(PARCELS.some(isOverdue), 'ต้องมีอย่างน้อย 1 พัสดุที่ค้าง > 7 วัน');
+  is(!PARCELS.some(p => p.status === 'delivered' && isOverdue(p)), 'delivered ไม่ควรถูกตีว่าค้าง');
+
+  /* esc() must neutralise HTML from a mock tracking that contains angle brackets. */
+  is(esc('<script>').includes('&lt;'), 'esc() ต้อง escape < > &');
+
+  console.log(ok ? '✓ self-check ผ่านทั้งหมด (status set, transitions, filter, overdue, esc)' : '✗ self-check ล้มเหลว — ดู assertion ด้านบน');
+})();
+
+render();
+
+/* Same icon-font reveal as OCR page — kept here too so the list stands alone. */
+Promise.race([
+  document.fonts?.ready ?? Promise.resolve(),
+  new Promise(r => setTimeout(r, 3000)),
+]).finally(() => document.documentElement.classList.add('fonts-ready'));
+</script>
+
+</body>
+</html>
