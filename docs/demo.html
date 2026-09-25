@@ -40,26 +40,22 @@
   </div>
 
   <div class="sm-screen active" id="screen-capture">
-    <div class="tis-help-box tis-help-box--blue">
-      <b>Photograph the parcel label and let AI fill the form.</b>
-      Set the project and storage location once, then keep scanning. Gemini reads tracking, carrier, recipient, floor/department, size, and condition. Staff only tap fields the model is unsure about.
-    </div>
-
-    <div class="tis-section">
-      <div class="tis-label">Session settings</div>
+    <details class="tis-section sm-session">
+      <summary><span class="tis-label">Session</span> AIS Tower 1 · Lobby (002) · Notify on</summary>
       <div class="pv-fields">
         <div class="pv-field"><label>Project</label><div class="value">AIS Tower 1 (Phahonyothin)</div></div>
         <div class="pv-field"><label>Storage location</label><div class="value">Lobby (002)</div></div>
         <div class="pv-field"><label>Arrived on</label><div class="value">18/09/2026 14:17</div></div>
       </div>
       <label class="pv-check"><input type="checkbox" checked> Notify the recipient immediately on Approve</label>
-    </div>
+    </details>
 
     <div class="sm-capture-grid">
       <div class="tis-section" style="margin:0">
         <div class="tis-label">Scan parcel label <span id="sm-mode"></span></div>
+        <p class="sm-hint">Fit the whole label in the frame, snap, then Approve. Gemini reads it only after you Approve.</p>
 
-        <div class="sm-capture-col">
+        <div class="sm-capture-col" ondragover="event.preventDefault();this.classList.add('is-dragover')" ondragleave="if(!this.contains(event.relatedTarget))this.classList.remove('is-dragover')" ondrop="this.classList.remove('is-dragover');dropFiles(event)">
         <div class="sm-capture-processing" id="sm-capture-processing" hidden>
           <div class="sm-spinner" aria-hidden="true"></div>
           <p id="sm-processing-text">Checking the label…</p>
@@ -68,7 +64,7 @@
         <div class="sm-camera-entry" id="sm-camera-entry">
           <div class="sm-scan-mark" aria-hidden="true"></div>
           <div style="font-size:22px;font-weight:800;margin-top:12px">From photo to clean scan</div>
-          <div class="tis-text-gray" style="margin-top:6px">Align the shipping label in the frame, snap once, then Approve. Keep recipient details and the barcode visible.</div>
+          <div class="tis-text-gray" style="margin-top:6px">Use the camera, upload a photo, or drop an image anywhere here.</div>
           <div class="sm-camera-entry-actions">
             <button class="pv-btn" type="button" onclick="continueToCamera()"><span class="mdc-button__label">Start scanning</span></button>
             <button class="pv-btn pv-btn-ghost" type="button" onclick="pickFiles()"><span class="mdc-button__label">Upload image</span></button>
@@ -154,13 +150,6 @@
 
         <canvas id="sm-canvas" hidden></canvas>
         <input type="file" id="sm-file" accept="image/*" multiple hidden onchange="filesPicked(this)">
-
-        <div class="sm-drop" onclick="pickFiles()" ondragover="event.preventDefault()" ondrop="dropFiles(event)">
-          Drag an image here, or click to choose a file — for counters without a camera.
-        </div>
-        <div class="tis-help-box tis-help-box--amber" style="margin-top:12px">
-          Place the <b>complete shipping label</b> in the frame and tap SNAP LABEL, or upload a photo. A local text check runs in the browser. Gemini runs only after you Approve.
-        </div>
         </div>
       </div>
 
@@ -348,10 +337,10 @@
 </div>
 
 <div class="sm-scrim" onclick="closeSheet()"></div>
-<div class="sm-sheet" id="sm-sheet">
+<div class="sm-sheet" id="sm-sheet" role="dialog" aria-modal="true" aria-labelledby="sm-sheet-title">
   <div class="sm-sheet-head">
     <div style="flex:1">
-      <h3 style="margin:0;font-size:16px">Review AI values</h3>
+      <h3 id="sm-sheet-title" style="margin:0;font-size:16px">Review AI values</h3>
       <div class="tis-text-gray" id="sm-sheet-sub">&nbsp;</div>
     </div>
     <button class="sm-choice" type="button" onclick="closeSheet()">Close</button>
@@ -378,7 +367,7 @@
   </div>
 </div>
 
-<div class="sm-photo-lightbox" id="sm-photo-lightbox" hidden onclick="if(event.target===this)closePhotoPreview()">
+<div class="sm-photo-lightbox" id="sm-photo-lightbox" role="dialog" aria-modal="true" aria-label="Parcel photo preview" hidden onclick="if(event.target===this)closePhotoPreview()">
   <div class="sm-photo-lightbox-card">
     <img id="sm-photo-lightbox-img" alt="Parcel photo preview">
     <div class="sm-photo-lightbox-actions">
@@ -389,8 +378,8 @@
 </div>
 
 <div class="sm-crop-editor" id="sm-crop-editor" hidden onclick="if(event.target===this)cancelCropEdit()">
-  <div class="sm-crop-editor-card">
-    <div style="font-weight:800;margin-bottom:8px">Adjust crop</div>
+  <div class="sm-crop-editor-card" role="dialog" aria-modal="true" aria-labelledby="sm-crop-title">
+    <div id="sm-crop-title" style="font-weight:800;margin-bottom:8px">Adjust crop</div>
     <div class="tis-text-gray" style="margin-bottom:10px">Starts on the label frame. Drag inside the box to move it, or drag a corner to reshape. Text is re-read only when you apply.</div>
     <canvas id="sm-crop-canvas" width="640" height="360"></canvas>
     <div class="sm-crop-editor-actions">
@@ -401,8 +390,8 @@
 </div>
 
 <div class="sm-dialog-wrap" onclick="if(event.target===this)closeConfirm()">
-  <div class="pv-dialog">
-    <h3 style="margin-top:0">Confirm parcel save</h3>
+  <div class="pv-dialog" role="dialog" aria-modal="true" aria-labelledby="sm-confirm-title">
+    <h3 id="sm-confirm-title" style="margin-top:0">Confirm parcel save</h3>
     <div id="sm-confirm-text"></div>
     <div class="sm-actionbar" style="margin-top:16px">
       <button class="pv-btn pv-btn-ghost" type="button" onclick="closeConfirm()"><span class="mdc-button__label">Cancel</span></button>
@@ -412,8 +401,8 @@
 </div>
 
 <div class="pl-dialog-wrap" onclick="if (event.target === this) closeDialog()">
-  <div class="pv-dialog">
-    <h3 style="margin-top:0">Confirm parcel delivery</h3>
+  <div class="pv-dialog" role="dialog" aria-modal="true" aria-labelledby="pl-dialog-title">
+    <h3 id="pl-dialog-title" style="margin-top:0">Confirm parcel delivery</h3>
     <div id="pl-dialog-text"></div>
     <div class="sm-actionbar" style="margin-top:16px">
       <button class="pv-btn pv-btn-ghost" type="button" onclick="closeDialog()">Cancel</button>
@@ -654,6 +643,7 @@ const exportCsv = () => alert('Export CSV — this demo does not generate a file
   is(PARCELS.some(isOverdue), 'there should be at least one parcel overdue > 7 days');
   is(!PARCELS.some(p => p.status === 'delivered' && isOverdue(p)), 'delivered should not count as overdue');
   is(esc('<script>').includes('&lt;'), 'esc() must escape < > &');
+  is(document.querySelector('.pv-brand').textContent === 'ParcelVision AI', 'nav brand must read ParcelVision AI');
   console.log(ok ? '✓ self-check passed (status set, transitions, filter, overdue, esc)' : '✗ self-check failed');
 })();
 

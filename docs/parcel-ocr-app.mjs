@@ -786,7 +786,9 @@ function renderQueue() {
     '<span class="tis-badge-outline-success tis-badge-sm">Ready ' + count('ready') + '</span>' +
     (count('review') ? '<span class="tis-badge-outline-warning tis-badge-sm">Needs review ' + count('review') + '</span>' : '') +
     (count('error') ? '<span class="tis-badge-outline-danger tis-badge-sm">Unreadable ' + count('error') + '</span>' : '');
-  document.getElementById('sm-to-approve').disabled = !queue.some(i => i.fields);
+  const toApprove = document.getElementById('sm-to-approve');
+  toApprove.disabled = !queue.some(i => i.fields);
+  toApprove.querySelector('.mdc-button__label').textContent = 'Review and Approve' + (queue.length ? ' (' + queue.length + ')' : '');
 }
 const shortCarrier = c => {
   const base = (c || '').replace(/\s*\(\d+\/\d+\)\s*$/, '').trim();
@@ -1005,7 +1007,15 @@ function go(screen) {
     if (screen !== 'capture' && !queue.length) { seedDemo(4); render(); }
     show(screen);
   }
-  document.querySelectorAll('#sm-steps .tis-pill').forEach(p => p.classList.toggle('active', p.dataset.screen === screen));
+  markSteps(screen);
+}
+function markSteps(screen) {
+  const pills = [...document.querySelectorAll('#sm-steps .tis-pill')];
+  const at = pills.findIndex(p => p.dataset.screen === screen);
+  pills.forEach((p, i) => {
+    p.classList.toggle('active', i === at);
+    p.classList.toggle('is-done', i < at);
+  });
 }
 function show(screen) {
   document.querySelectorAll('.sm-screen').forEach(s => s.classList.remove('active'));
@@ -1023,11 +1033,22 @@ window.addEventListener('pagehide', () => {
 });
 window.addEventListener('beforeunload', () => stopCameraTracks());
 document.addEventListener('keydown', event => {
-  if (event.key !== 'Escape') return;
-  const box = document.getElementById('sm-photo-lightbox');
-  if (box && !box.hidden) {
+  const body = document.body.classList;
+  if (event.key === 'Escape') {
+    const close =
+      !document.getElementById('sm-photo-lightbox').hidden ? closePhotoPreview :
+      !document.getElementById('sm-crop-editor').hidden ? cancelCropEdit :
+      body.contains('sm-dialog-open') ? closeConfirm :
+      body.contains('pl-dialog-open') ? window.closeDialog :
+      body.contains('sm-sheet-open') ? closeSheet : null;
+    if (close) { event.preventDefault(); close(); }
+    return;
+  }
+  const typing = event.target.closest?.('input, textarea, select, button, [contenteditable]');
+  const overlay = body.contains('sm-dialog-open') || body.contains('sm-sheet-open');
+  if (event.key === ' ' && !typing && !overlay && !analyzing && !document.getElementById('sm-scanner').hidden) {
     event.preventDefault();
-    closePhotoPreview();
+    captureNow();
   }
 });
 
@@ -1076,7 +1097,12 @@ Object.assign(window, {
   is(analyzeLabelText('FLASH EXPRESS').ok, 'carrier name alone passes local OCR check');
   is(!!analyzeLabelText('DHL 12/09/2026 1.2kg').date, 'date is recorded as extra context');
   is(!analyzeLabelText('steering wheel dashboard').ok, 'non-label text fails local OCR check');
-  console.log(ok ? '✓ self-check passed (confidence, units, duplicates, barcode conflict, local OCR)' : '✗ self-check failed');
+  markSteps('approve');
+  const step = s => document.querySelector('#sm-steps [data-screen="' + s + '"]').classList;
+  is(step('capture').contains('is-done') && step('approve').contains('active') && !step('done').contains('is-done'), 'stepper marks earlier steps done');
+  markSteps('capture');
+  is(!step('capture').contains('is-done') && step('capture').contains('active'), 'stepper resets on capture');
+  console.log(ok ? '✓ self-check passed (confidence, units, duplicates, barcode conflict, local OCR, stepper)' : '✗ self-check failed');
 })();
 
 render();
